@@ -1,13 +1,21 @@
 configure_file(r3d/version.hpp.in "${CMAKE_CURRENT_BINARY_DIR}/generated/r3d/version.hpp" @ONLY)
 
 add_library(r3d STATIC
+  r3d/core/camera_model.cpp
   r3d/core/color_convert.cpp
   r3d/core/log.cpp
+  r3d/core/pyramid.cpp
   r3d/core/simd.cpp
   r3d/core/thread_pool.cpp
+  r3d/io/colmap_scene.cpp
   r3d/io/image_io.cpp
+  r3d/io/openmvg_scene.cpp
   r3d/io/ply.cpp
+  r3d/io/scene_export.cpp
   r3d/io/stb_impl.cpp
+  r3d/scene/scene.cpp
+  r3d/scene/undistort.cpp
+  r3d/select/view_selection.cpp
 )
 add_library(R3D::r3d ALIAS r3d)
 
@@ -17,7 +25,7 @@ target_include_directories(r3d PUBLIC
 
 target_link_libraries(r3d
   PUBLIC Eigen3::Eigen hwy::hwy
-  PRIVATE r3d_stb_headers)
+  PRIVATE r3d_stb_headers nlohmann_json::nlohmann_json)
 
 # Eigen: refuse any non-MPL2 (LGPL) code paths at compile time.
 target_compile_definitions(r3d PUBLIC EIGEN_MPL2_ONLY)

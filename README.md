@@ -1,18 +1,28 @@
 # R3DMVS
 
 Multi-view stereo densification for [OpenMVG](https://github.com/openMVG/openMVG) scenes, developed for
-[Regard3D](https://www.regard3d.org). It takes an OpenMVG `sfm_data.json` and produces a dense, oriented,
+[Regard3D](https://www.regard3d.org). It takes an OpenMVG scene (`sfm_data.bin` or `.json`) and produces a dense, oriented,
 scale-annotated point cloud, which is meant to be meshed and textured with external tools (PoissonRecon,
 FSSR, texrecon).
 
-Status: **Phase 0** (foundation): core types, image and PLY I/O, thread pool, SIMD dispatch, CI.
-See [plan.md](plan.md) for the roadmap and [docs/DECISIONS.md](docs/DECISIONS.md) for design and IP decisions.
+Status: **Phase 1** (scene import and pair selection): OpenMVG `sfm_data.json` / `.bin` and COLMAP text
+import, OpenMVG camera models, undistortion, image pyramids, stereo pair selection, PLY exports for visual
+checks. Design and IP decisions are logged in [docs/DECISIONS.md](docs/DECISIONS.md).
+
+```sh
+# Summary, stereo pairs, sparse cloud, camera frustums and undistorted images of a scene:
+r3dmvs scene path/to/sfm_data.bin --pairs --sparse-ply sparse.ply --colors --cameras-ply cameras.ply \
+       --undistort-dir undistorted
+```
+
+Images are looked up under `root_path`, then next to the `sfm_data` file; `--image-dir` overrides both.
 
 ## Building
 
 Requirements: CMake ≥ 3.25, Ninja, and a C++20 compiler with `<format>`:
 MSVC 19.30+ (VS 2022), clang-cl, GCC 13+, Clang 17+, or AppleClang 15+ (macOS 13.3+).
 Dependencies are downloaded automatically at configure time (pinned versions, SHA256-verified).
+Tests on real scenes run when `R3D_TESTDATA_DIR` (default `../testdata`) contains `<scene>/sfm_data.bin`.
 
 ```sh
 cmake --preset gcc-release          # or: msvc-release, clang-cl-release, clang-release, macos-release
