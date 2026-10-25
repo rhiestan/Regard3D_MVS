@@ -1,12 +1,14 @@
 // r3dmvs: command line front end of the R3DMVS library.
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <exception>
 #include <filesystem>
 #include <format>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include <CLI/CLI.hpp>
@@ -19,11 +21,17 @@
 #include "r3d/io/image_io.hpp"
 #include "r3d/io/openmvg_scene.hpp"
 #include "r3d/io/ply.hpp"
+#include "r3d/io/pfm.hpp"
 #include "r3d/io/scene_export.hpp"
+#include "r3d/rectify/rectification.hpp"
 #include "r3d/scene/scene.hpp"
 #include "r3d/scene/undistort.hpp"
 #include "r3d/select/view_selection.hpp"
+#include "r3d/stereo/disparity_eval.hpp"
+#include "r3d/stereo/pair_cloud.hpp"
+#include "r3d/stereo/stereo_matcher.hpp"
 #include "r3d/version.hpp"
+#include "stereo_commands.hpp"
 
 namespace {
 
@@ -194,6 +202,119 @@ void run_scene(const SceneArgs& args) {
   }
 }
 
+struct PairArgs {
+  std::string input;
+  std::string image_dir;
+  long long base = -1;     // source view ids
+  long long partner = -1;
+  bool all = false;
+  std::string out_dir;
+  double resolution = 1.0;
+  r3d::StereoOptions options;
+};
+
+std::size_t view_index(const r3d::Scene& scene, long long source_id) {
+  for (std::size_t v = 0; v < scene.views.size(); ++v) {
+    if (static_cast<long long>(scene.views[v].source_id) == source_id) {
+      return v;
+    }
+  }
+  r3d::throw_error("no calibrated view with id {}", source_id);
+}
+
+// Rectifies and matches stereo pairs of a scene; writes rectified images,
+// disparity maps and coloured point clouds for inspection.
+void run_pair(const PairArgs& args) {
+  SceneArgs scene_args;
+  scene_args.input = args.input;
+  scene_args.image_dir = args.image_dir;
+  const r3d::Scene scene = read_scene(scene_args);
+  const r3d::ViewSelection selection = r3d::select_views(scene);
+
+  std::vector<std::pair<std::size_t, std::size_t>> jobs;
+  if (args.all) {
+    for (std::size_t v = 0; v < scene.views.size(); ++v) {
+      if (!selection.partners[v].empty()) {
+        jobs.emplace_back(v, selection.partners[v].front().view);
+      }
+    }
+  } else {
+    const std::size_t base = args.base >= 0 ? view_index(scene, args.base) : 0;
+    std::size_t partner = 0;
+    if (args.partner >= 0) {
+      partner = view_index(scene, args.partner);
+    } else if (!selection.partners[base].empty()) {
+      partner = selection.partners[base].front().view;
+    } else {
+      r3d::throw_error("view {} has no stereo partner", scene.views[base].source_id);
+    }
+    jobs.emplace_back(base, partner);
+  }
+  const std::filesystem::path out_dir = utf8_path(args.out_dir);
+  if (!out_dir.empty()) {
+    std::filesystem::create_directories(out_dir);
+  }
+  r3d::RectificationOptions rect_options;
+  rect_options.resolution = args.resolution;
+
+  std::printf("%5s %5s %11s %11s %6s %5s %7s %7s %8s %8s\n", "base", "pair", "left", "right", "dmin", "nd", "rect s",
+              "match s", "Mcell/s", "density");
+  for (const auto& [b, p] : jobs) {
+    const r3d::SceneView& vb = scene.views[b];
+    const r3d::SceneView& vp = scene.views[p];
+    r3d::DepthRange depth = selection.view_depth[b];
+    for (const r3d::StereoPartner& sp : selection.partners[b]) {
+      if (sp.view == p && sp.depth.valid()) {
+        depth = sp.depth;
+      }
+    }
+    const r3d::RectifiedPair rp =
+        r3d::compute_rectification(scene.camera_of(b), vb.pose, scene.camera_of(p), vp.pose, depth, rect_options);
+    if (!rp.valid) {
+      std::printf("%5u %5u  skipped: %s\n", vb.source_id, vp.source_id, rp.reason.c_str());
+      continue;
+    }
+    const r3d::Stopwatch rect_watch;
+    r3d::ImageU8 mask_left, mask_right;
+    const r3d::ImageU16 left = r3d::rectify_image(r3d::read_image_u16(vb.image_path, 1), scene.camera_of(b),
+                                                  vb.pose, rp.left, &mask_left);
+    const r3d::ImageU16 right = r3d::rectify_image(r3d::read_image_u16(vp.image_path, 1), scene.camera_of(p),
+                                                   vp.pose, rp.right, &mask_right);
+    const double rect_seconds = rect_watch.elapsed_seconds();
+    const r3d::Stopwatch match_watch;
+    const r3d::DisparityMap disp = r3d::match_stereo(left.view(), right.view(), mask_left.view(), mask_right.view(),
+                                                     rp.disparity_min, rp.num_disparities, args.options);
+    const double match_seconds = match_watch.elapsed_seconds();
+    std::size_t valid_pixels = 0;
+    std::size_t matched = 0;
+    for (int y = 0; y < left.height(); ++y) {
+      for (int x = 0; x < left.width(); ++x) {
+        valid_pixels += mask_left(x, y) != 0 ? 1 : 0;
+        matched += std::isfinite(disp.disparity(x, y)) ? 1 : 0;
+      }
+    }
+    const double cells = static_cast<double>(left.width()) * left.height() * disp.num_disparities;
+    std::printf("%5u %5u %5dx%-5d %5dx%-5d %6d %5d %7.2f %7.2f %8.1f %7.1f%%\n", vb.source_id, vp.source_id,
+                left.width(), left.height(), right.width(), right.height(), rp.disparity_min, disp.num_disparities,
+                rect_seconds, match_seconds, cells / match_seconds * 1e-6,
+                100.0 * static_cast<double>(matched) / static_cast<double>(std::max<std::size_t>(valid_pixels, 1)));
+    if (!out_dir.empty()) {
+      const std::string name = std::format("pair_{}_{}", vb.source_id, vp.source_id);
+      const r3d::ImageU8 color =
+          r3d::rectify_image(r3d::read_image_u8(vb.image_path, 3), scene.camera_of(b), vb.pose, rp.left);
+      r3d::PlyWriteOptions ply;
+      ply.comments.push_back("r3dmvs stereo pair " + name);
+      r3d::write_ply(out_dir / (name + ".ply"), r3d::disparity_to_point_cloud(rp, disp, color.view()), ply);
+      const auto lo = static_cast<float>(rp.disparity_min);
+      r3d::write_png(out_dir / (name + "_disparity.png"),
+                     r3d::colorize_disparity(disp.disparity, lo, lo + static_cast<float>(rp.num_disparities)).view(), 2);
+      r3d::write_png(out_dir / (name + "_left.png"), left.view(), 2);
+      r3d::write_png(out_dir / (name + "_right.png"), right.view(), 2);
+      r3d::write_pfm(out_dir / (name + "_disparity.pfm"), disp.disparity.view());
+    }
+  }
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -220,6 +341,22 @@ int main(int argc, char** argv) {
   scene->add_option("--cameras-ply", scene_args.cameras_ply, "Write the camera frustums to a PLY file");
   scene->add_option("--undistort-dir", scene_args.undistort_dir, "Write undistorted images (PNG) to this directory");
 
+  r3dmvs::StereoArgs stereo_args;
+  CLI::App* stereo = nullptr;
+  r3dmvs::add_stereo_command(app, stereo_args, stereo);
+
+  PairArgs pair_args;
+  CLI::App* pair = app.add_subcommand("pair", "Rectify and match stereo pairs of a scene, export disparity and points");
+  pair->add_option("input", pair_args.input, "sfm_data.json, sfm_data.bin or a COLMAP model directory")->required();
+  pair->add_option("--image-dir", pair_args.image_dir, "Directory with the images (default: from the scene)");
+  pair->add_option("--base", pair_args.base, "Base view id (default: the first view)");
+  pair->add_option("--partner", pair_args.partner, "Partner view id (default: the best partner of the base view)");
+  pair->add_flag("--all", pair_args.all, "Every view with its best partner");
+  pair->add_option("--out-dir", pair_args.out_dir, "Write rectified images, disparity maps and point clouds here");
+  pair->add_option("--resolution", pair_args.resolution, "Rectified resolution relative to the base view")
+      ->check(CLI::Range(0.05, 4.0));
+  r3dmvs::add_matcher_options(*pair, pair_args.options);
+
   try {
     app.parse(argc, argv);
   } catch (const CLI::ParseError& e) {
@@ -236,6 +373,10 @@ int main(int argc, char** argv) {
       print_info();
     } else if (scene->parsed()) {
       run_scene(scene_args);
+    } else if (stereo->parsed()) {
+      r3dmvs::run_stereo(stereo_args);
+    } else if (pair->parsed()) {
+      run_pair(pair_args);
     }
   } catch (const std::exception& e) {
     r3d::log_error("{}", e.what());

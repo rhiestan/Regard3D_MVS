@@ -2,6 +2,7 @@ add_executable(r3d_tests
   test_main.cpp
   test_camera.cpp
   test_camera_model.cpp
+  test_census.cpp
   test_colmap_scene.cpp
   test_color_convert.cpp
   test_image.cpp
@@ -9,6 +10,8 @@ add_executable(r3d_tests
   test_openmvg_scene.cpp
   test_ply.cpp
   test_pyramid.cpp
+  test_rectification.cpp
+  test_stereo.cpp
   test_thread_pool.cpp
   test_undistort.cpp
   test_view_selection.cpp

@@ -1,0 +1,87 @@
+#pragma once
+
+#include <cstddef>
+#include <cstdint>
+#include <limits>
+#include <vector>
+
+#include "r3d/core/image.hpp"
+
+namespace r3d {
+
+// Census-SGM matcher for rectified pairs (plan section 3.4a): 9x7 Census,
+// Hamming costs, 8-path semi-global aggregation over the full label range,
+// winner-takes-all with sub-pixel interpolation, left-right check, speckle
+// and median filters. Large images are processed in independent overlapping
+// tiles that are blended linearly (Hirschmüller 2008, section 2.6); the
+// result does not depend on the number of threads.
+
+enum class SubpixelMethod {
+  none,
+  parabola,     // fit through the aggregated costs at d - 1, d, d + 1
+  equiangular,  // symmetric V fit (Shimizu & Okutomi 2001)
+};
+
+// Defaults tuned on the Middlebury 2014 training set (DECISIONS.md D19).
+struct StereoOptions {
+  int p1 = 28;               // penalty for a disparity change of one (Census costs are 0..62)
+  int p2 = 200;              // penalty for larger changes (at most 8000: 16-bit sums)
+  int p2_adapt = 4;          // > 0: P2 * a / (a + |dI|) with the 8-bit intensity step dI (at least P1 + 1)
+  int invalid_cost = 31;     // cost of correspondences outside the right image
+  SubpixelMethod subpixel = SubpixelMethod::equiangular;
+  float uniqueness = 0.0F;   // reject if best > (1 - uniqueness) * second best (outside d +- 1)
+  int lr_max_diff = 1;       // left-right check tolerance in labels; < 0 disables the check
+  bool lr_full_match = false; // check against a full right-to-left match (slower, slightly better)
+                              // instead of the right disparities of the same cost volume
+  int speckle_size = 100;    // remove segments with fewer pixels (0: off)
+  float speckle_diff = 1.0F; // disparity step that separates segments
+  bool median = true;        // 3x3 median of the valid disparities
+  int tile_size = 512;       // core size of the tiles
+  int tile_margin = 32;      // discarded border of a tile (each side with a neighbour)
+  int tile_blend = 32;       // blending zone between neighbouring tiles
+  std::size_t memory_budget = std::size_t{2} << 30;  // bytes for the tiles processed concurrently
+  bool scalar_kernels = false;  // scalar reference kernels (tests, benchmarks)
+};
+
+inline constexpr float kInvalidDisparity = std::numeric_limits<float>::infinity();
+
+struct DisparityMap {
+  ImageF32 disparity;   // per left pixel: x_left - x_right, kInvalidDisparity where unknown
+  ImageF32 confidence;  // 1 - best / second best aggregated cost, in [0, 1]
+  int disparity_min = 0;
+  int num_disparities = 0;
+};
+
+// Matches a rectified pair of 16-bit grayscale images (equal height). The
+// label range is disparity_min .. disparity_min + num_disparities - 1;
+// num_disparities is rounded up to a multiple of 16. Masks (255 = valid)
+// may be empty views (all pixels valid).
+[[nodiscard]] DisparityMap match_stereo(ImageView<const std::uint16_t> left, ImageView<const std::uint16_t> right,
+                                        ImageView<const std::uint8_t> left_valid,
+                                        ImageView<const std::uint8_t> right_valid, int disparity_min,
+                                        int num_disparities, const StereoOptions& options = {});
+
+// Post-processing filters (also used by match_stereo).
+// Invalidates connected segments (4-neighbours, steps <= max_diff) with fewer than min_size pixels.
+void remove_speckles(ImageF32& disparity, int min_size, float max_diff);
+// 3x3 median over the valid neighbours of every valid pixel.
+[[nodiscard]] ImageF32 median_filter_3x3(const ImageF32& disparity);
+
+namespace detail {
+
+// Aggregated cost volume S[y][x][d] of the whole image as one tile (no
+// tiling, post-processing or WTA), with the optimised or scalar kernels.
+[[nodiscard]] std::vector<std::uint16_t> sgm_cost_volume(ImageView<const std::uint16_t> left,
+                                                         ImageView<const std::uint16_t> right, int disparity_min,
+                                                         int num_disparities, const StereoOptions& options);
+
+// Textbook implementation of the same volume (each of the 8 paths computed
+// separately in plain integer arithmetic), for testing the optimised code.
+[[nodiscard]] std::vector<std::uint16_t> sgm_cost_volume_reference(ImageView<const std::uint16_t> left,
+                                                                   ImageView<const std::uint16_t> right,
+                                                                   int disparity_min, int num_disparities,
+                                                                   const StereoOptions& options);
+
+}  // namespace detail
+
+}  // namespace r3d

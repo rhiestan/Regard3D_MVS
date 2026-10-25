@@ -10,12 +10,19 @@ add_library(r3d STATIC
   r3d/io/colmap_scene.cpp
   r3d/io/image_io.cpp
   r3d/io/openmvg_scene.cpp
+  r3d/io/pfm.cpp
   r3d/io/ply.cpp
   r3d/io/scene_export.cpp
   r3d/io/stb_impl.cpp
+  r3d/rectify/rectification.cpp
   r3d/scene/scene.cpp
   r3d/scene/undistort.cpp
   r3d/select/view_selection.cpp
+  r3d/stereo/census.cpp
+  r3d/stereo/disparity_eval.cpp
+  r3d/stereo/pair_cloud.cpp
+  r3d/stereo/sgm_kernels.cpp
+  r3d/stereo/stereo_matcher.cpp
 )
 add_library(R3D::r3d ALIAS r3d)
 
