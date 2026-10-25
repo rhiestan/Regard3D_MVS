@@ -1,0 +1,85 @@
+# clang-tidy checks for hwyBLAS, used by clangd and by the CMake option
+# HWYBLAS_CLANG_TIDY.
+#
+# The groups that find real problems are enabled. The checks disabled below
+# conflict with the BLAS interface (C headers, Fortran-style signatures and
+# names), with Google style, or with deliberate patterns of the code (e.g.
+# Highway's per-target re-inclusion, bitwise comparisons in the tests).
+Checks: >
+  -*,
+  bugprone-*,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-exception-escape,
+  -bugprone-macro-parentheses,
+  -bugprone-random-generator-seed,
+  -bugprone-suspicious-memory-comparison,
+  -bugprone-throwing-static-initialization,
+  -bugprone-unchecked-string-to-number-conversion,
+  clang-analyzer-*,
+  -clang-analyzer-optin.core.EnumCastOutOfRange,
+  -clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling,
+  google-*,
+  -google-readability-braces-around-statements,
+  misc-*,
+  -misc-const-correctness,
+  -misc-header-include-cycle,
+  -misc-include-cleaner,
+  -misc-no-recursion,
+  -misc-non-private-member-variables-in-classes,
+  -misc-use-internal-linkage,
+  modernize-*,
+  -modernize-avoid-c-arrays,
+  -modernize-concat-nested-namespaces,
+  -modernize-deprecated-headers,
+  -modernize-return-braced-init-list,
+  -modernize-use-auto,
+  -modernize-use-nodiscard,
+  -modernize-use-trailing-return-type,
+  -modernize-use-using,
+  performance-*,
+  -performance-enum-size,
+  -performance-no-int-to-ptr,
+  portability-*,
+  readability-*,
+  -readability-avoid-const-params-in-decls,
+  -readability-avoid-nested-conditional-operator,
+  -readability-avoid-return-with-void-value,
+  -readability-braces-around-statements,
+  -readability-function-cognitive-complexity,
+  -readability-identifier-length,
+  -readability-implicit-bool-conversion,
+  -readability-isolate-declaration,
+  -readability-magic-numbers,
+  -readability-math-missing-parentheses,
+  -readability-uppercase-literal-suffix,
+  -readability-use-concise-preprocessor-directives
+
+# Why the checks above are disabled:
+#   easily-swappable-parameters, avoid-const-params-in-decls, use-using,
+#     deprecated-headers, identifier-length: BLAS signatures and names, and
+#     the C headers (CBLAS declares const value parameters).
+#   macro-parentheses: macros that paste type and routine names.
+#   suspicious-memory-comparison, EnumCastOutOfRange, no-int-to-ptr: the
+#     tests compare bitwise, pass invalid enum values and build addresses
+#     on purpose.
+#   exception-escape, throwing-static-initialization, random-generator-seed,
+#     unchecked-string-to-number-conversion, DeprecatedOrUnsafeBufferHandling:
+#     GoogleTest, fixed seeds and the command lines of the test programs.
+#   header-include-cycle, concat-nested-namespaces: Highway's foreach_target
+#     re-includes each source per target, inside HWY_NAMESPACE.
+#   include-cleaner: Highway's umbrella header hwy/highway.h.
+#   no-recursion: the recursive TRSM.
+#   avoid-c-arrays: arrays of SIMD vectors in the kernels.
+#   (google-)braces-around-statements, isolate-declaration,
+#     implicit-bool-conversion, nested-conditional-operator,
+#     return-with-void-value,
+#     math-missing-parentheses, uppercase-literal-suffix,
+#     concise-preprocessor-directives, use-auto, use-nodiscard,
+#     use-trailing-return-type, return-braced-init-list, const-correctness,
+#     use-internal-linkage, non-private-member-variables-in-classes,
+#     enum-size, magic-numbers, function-cognitive-complexity: style choices
+#     that Google style leaves open or that the code makes consistently.
+
+# Only diagnose hwyBLAS's own headers, not Highway's, GoogleTest's or Eigen's.
+HeaderFilterRegex: '.*'
+ExcludeHeaderFilterRegex: '([/\\]_deps[/\\]|[/\\]hwy[/\\]|[/\\]Eigen[/\\]|[/\\]gtest[/\\]|[/\\]gmock[/\\])'

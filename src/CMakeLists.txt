@@ -1,0 +1,28 @@
+configure_file(r3d/version.hpp.in "${CMAKE_CURRENT_BINARY_DIR}/generated/r3d/version.hpp" @ONLY)
+
+add_library(r3d STATIC
+  r3d/core/color_convert.cpp
+  r3d/core/log.cpp
+  r3d/core/simd.cpp
+  r3d/core/thread_pool.cpp
+  r3d/io/image_io.cpp
+  r3d/io/ply.cpp
+  r3d/io/stb_impl.cpp
+)
+add_library(R3D::r3d ALIAS r3d)
+
+target_include_directories(r3d PUBLIC
+  "${CMAKE_CURRENT_SOURCE_DIR}"
+  "${CMAKE_CURRENT_BINARY_DIR}/generated")
+
+target_link_libraries(r3d
+  PUBLIC Eigen3::Eigen hwy::hwy
+  PRIVATE r3d_stb_headers)
+
+# Eigen: refuse any non-MPL2 (LGPL) code paths at compile time.
+target_compile_definitions(r3d PUBLIC EIGEN_MPL2_ONLY)
+
+find_package(Threads REQUIRED)
+target_link_libraries(r3d PUBLIC Threads::Threads)
+
+r3d_set_target_options(r3d)

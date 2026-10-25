@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.preset }} (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-2022, preset: msvc-release }
+          - { os: windows-2022, preset: clang-cl-release }
+          - { os: ubuntu-24.04, preset: gcc-release }
+          - { os: ubuntu-24.04, preset: clang-release }
+          - { os: ubuntu-24.04, preset: clang-asan }
+          - { os: macos-14, preset: macos-release }
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Ninja (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+
+      - name: Install Ninja (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ninja
+
+      - name: Install Ninja (Windows)
+        if: runner.os == 'Windows'
+        run: choco install ninja -y --no-progress
+
+      - name: MSVC developer environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Tool versions
+        run: |
+          cmake --version
+          ninja --version
+
+      - name: Configure
+        run: cmake --preset ${{ matrix.preset }}
+
+      - name: Build
+        run: cmake --build --preset ${{ matrix.preset }}
+
+      - name: Test
+        run: ctest --preset ${{ matrix.preset }}
+
+      - name: Smoke test CLI (Unix)
+        if: runner.os != 'Windows'
+        run: ./build/${{ matrix.preset }}/apps/r3dmvs info
+
+      - name: Smoke test CLI (Windows)
+        if: runner.os == 'Windows'
+        run: .\build\${{ matrix.preset }}\apps\r3dmvs.exe info
