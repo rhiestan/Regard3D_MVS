@@ -1,7 +1,6 @@
 #include <algorithm>
 #include <cmath>
 #include <numbers>
-#include <random>
 #include <vector>
 
 #include <Eigen/Geometry>
@@ -34,11 +33,11 @@ r3d::Pose look_at(const Eigen::Vector3d& center, const Eigen::Vector3d& target) 
 
 // Adds random points in a ball and their observations in every view that sees them.
 void add_points(r3d::Scene& scene, const Eigen::Vector3d& center, double radius, int count, unsigned seed) {
-  std::mt19937 rng(seed);
-  std::uniform_real_distribution<double> u(-1.0, 1.0);
+  r3d::test::Rng rng(seed);
   std::vector<r3d::TrackObservation> track;
   for (int i = 0; i < count;) {
-    const Eigen::Vector3d p(u(rng), u(rng), u(rng));
+    Eigen::Vector3d p;
+    for (int k = 0; k < 3; ++k) p[k] = rng.uniform(-1.0, 1.0);
     if (p.norm() > 1.0) {
       continue;
     }

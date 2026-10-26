@@ -1,6 +1,5 @@
 #include <algorithm>
 #include <cmath>
-#include <random>
 
 #include <Eigen/Geometry>
 #include <doctest/doctest.h>
@@ -82,16 +81,15 @@ TEST_CASE("Rectified cameras have aligned rows and the documented disparity") {
       CHECK(pair.left.intrinsics.width < 2 * r.left_cam.width);
       CHECK(pair.left.intrinsics.height < 2 * r.left_cam.height);
 
-      std::mt19937 rng(7);
-      std::uniform_real_distribution<double> ux(0.0, r.left_cam.width - 1.0);
-      std::uniform_real_distribution<double> uy(0.0, r.left_cam.height - 1.0);
-      std::uniform_real_distribution<double> uz(depth.min, depth.max);
+      r3d::test::Rng rng(7);
       int seen = 0;
       for (int i = 0; i < 500; ++i) {
         // A point seen by the base view inside the depth range.
-        const Eigen::Vector2d u = r.left_cam.undistort_pixel(Eigen::Vector2d(ux(rng), uy(rng)));
+        const double px = rng.uniform(0.0, r.left_cam.width - 1.0);
+        const double py = rng.uniform(0.0, r.left_cam.height - 1.0);
+        const Eigen::Vector2d u = r.left_cam.undistort_pixel(Eigen::Vector2d(px, py));
         const Eigen::Vector3d ray((u.x() - r.left_cam.cx) / r.left_cam.fx, (u.y() - r.left_cam.cy) / r.left_cam.fy, 1.0);
-        const Eigen::Vector3d x = r.left_pose.camera_to_world(ray * uz(rng));
+        const Eigen::Vector3d x = r.left_pose.camera_to_world(ray * rng.uniform(depth.min, depth.max));
         const Eigen::Vector2d pl = pair.left.project(x);
         const Eigen::Vector2d pr = pair.right.project(x);
         R3D_CHECK_NEAR(pl.y(), pr.y(), 1e-9);

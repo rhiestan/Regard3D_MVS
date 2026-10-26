@@ -1,6 +1,5 @@
 #include <cmath>
 #include <cstdint>
-#include <random>
 #include <vector>
 
 #include <doctest/doctest.h>
@@ -20,14 +19,13 @@ namespace {
 struct Texture {
   std::vector<double> fx, fy, phase, amp;
   explicit Texture(unsigned seed) {
-    std::mt19937 rng(seed);
-    std::uniform_real_distribution<double> f(0.05, 0.9);
-    std::uniform_real_distribution<double> p(0.0, 6.283);
-    std::uniform_real_distribution<double> s(-1.0, 1.0);
+    r3d::test::Rng rng(seed);
     for (int i = 0; i < 24; ++i) {
-      fx.push_back(f(rng) * s(rng));
-      fy.push_back(f(rng) * s(rng));
-      phase.push_back(p(rng));
+      const double fx_mag = rng.uniform(0.05, 0.9);
+      fx.push_back(fx_mag * rng.uniform(-1.0, 1.0));
+      const double fy_mag = rng.uniform(0.05, 0.9);
+      fy.push_back(fy_mag * rng.uniform(-1.0, 1.0));
+      phase.push_back(rng.uniform(0.0, 6.283));
       amp.push_back(1.0 / (1.0 + i * 0.2));
     }
   }
@@ -67,11 +65,10 @@ void render_pair(const Texture& tex, int w, int h, Disp&& disparity, r3d::ImageU
 }
 
 r3d::ImageU16 random_image(int w, int h, unsigned seed) {
-  std::mt19937 rng(seed);
-  std::uniform_int_distribution<int> dist(0, 65535);
+  r3d::test::Rng rng(seed);
   r3d::ImageU16 img(w, h, 1);
   for (int y = 0; y < h; ++y)
-    for (int x = 0; x < w; ++x) img(x, y) = static_cast<std::uint16_t>(dist(rng));
+    for (int x = 0; x < w; ++x) img(x, y) = static_cast<std::uint16_t>(rng.uniform_int(0, 65535));
   return img;
 }
 
@@ -120,12 +117,11 @@ TEST_CASE("SGM cost volume equals the textbook implementation on every SIMD targ
 }
 
 TEST_CASE("WTA row kernel: every SIMD target is bit-exact with scalar") {
-  std::mt19937 rng(17);
-  std::uniform_int_distribution<int> dist(0, 40);  // small range: many ties
+  r3d::test::Rng rng(17);
   for (const std::size_t nd : {16u, 32u, 48u, 80u}) {
     const std::size_t w = 37;
     std::vector<std::uint16_t> sum(w * nd);
-    for (auto& v : sum) v = static_cast<std::uint16_t>(dist(rng));
+    for (auto& v : sum) v = static_cast<std::uint16_t>(rng.uniform_int(0, 40));  // small range: many ties
     std::vector<std::uint16_t> best(w), cost(w), second(w), rc(w + nd - 1, 0xFFFF), rb(w + nd - 1, 0xFFFF);
     r3d::sgm::scalar::wta_row(sum.data(), w, nd, best.data(), cost.data(), second.data(), rc.data(), rb.data());
     for (const std::int64_t target : r3d::simd_available_targets()) {
@@ -238,12 +234,11 @@ TEST_CASE("Masked left pixels do not disturb the left-right check of their neigh
   r3d::ImageF32 gt;
   render_pair(tex, 160, 60, [](double, double) { return 10.0; }, left, right, gt);
   // Noise, so that true matches have non-zero costs.
-  std::mt19937 rng(4);
-  std::normal_distribution<double> noise(0.0, 3000.0);
+  r3d::test::Rng rng(4);
   for (int y = 0; y < 60; ++y)
     for (int x = 0; x < 160; ++x) {
-      left(x, y) = to_u16(left(x, y) + noise(rng));
-      right(x, y) = to_u16(right(x, y) + noise(rng));
+      left(x, y) = to_u16(left(x, y) + rng.normal(0.0, 3000.0));
+      right(x, y) = to_u16(right(x, y) + rng.normal(0.0, 3000.0));
     }
   // Masked top-right wedge (as left by rectification).
   r3d::ImageU8 lmask(160, 60, 1);
@@ -264,7 +259,7 @@ TEST_CASE("Masked left pixels do not disturb the left-right check of their neigh
     for (int y = 0; y < 60; ++y)
       for (int x = 20; x < 160; ++x)
         good += lmask(x, y) != 0 && std::abs(result.disparity(x, y) - 10.0F) < 0.5F ? 1 : 0;
-    CHECK(good > 0.75 * valid);  // 0.86 (without the fix: 0.45)
+    CHECK(good > 0.75 * valid);  // 0.89-0.91 (without the fix: about 0.45)
   }
 }
 
