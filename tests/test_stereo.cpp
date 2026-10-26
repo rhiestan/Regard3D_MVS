@@ -116,20 +116,69 @@ TEST_CASE("SGM cost volume equals the textbook implementation on every SIMD targ
   }
 }
 
+TEST_CASE("SGM cost volume with per-pixel label ranges equals the textbook implementation") {
+  const Texture tex(13);
+  r3d::ImageU16 left, right;
+  r3d::ImageF32 gt;
+  const int w = 37, h = 19, nd = 96;
+  render_pair(tex, w, h, [](double x, double y) { return 20.0 + 0.5 * x - 0.3 * y; }, left, right, gt);
+  r3d::test::Rng rng(31);
+  // Random ranges: neighbours overlap partly, contain each other or are disjoint.
+  r3d::LabelRanges ranges{r3d::Image<std::uint16_t>(w, h, 1), r3d::Image<std::uint16_t>(w, h, 1)};
+  for (int y = 0; y < h; ++y)
+    for (int x = 0; x < w; ++x) {
+      const int n = 16 * rng.uniform_int(1, 3);
+      ranges.num(x, y) = static_cast<std::uint16_t>(n);
+      ranges.lo(x, y) = static_cast<std::uint16_t>(rng.uniform_int(0, nd - n));
+    }
+  r3d::StereoOptions options;
+  options.p2 = 150;
+  options.p2_adapt = 8;
+  const std::vector<std::uint16_t> expected =
+      r3d::detail::sgm_cost_volume_reference(left.view(), right.view(), -2, nd, options, &ranges);
+  options.scalar_kernels = true;
+  CHECK(r3d::detail::sgm_cost_volume(left.view(), right.view(), -2, nd, options, &ranges) == expected);
+  options.scalar_kernels = false;
+  for (const std::int64_t target : r3d::simd_available_targets()) {
+    const r3d::ScopedSimdTarget scoped(target);
+    CAPTURE(r3d::simd_target_name(target));
+    CHECK(r3d::detail::sgm_cost_volume(left.view(), right.view(), -2, nd, options, &ranges) == expected);
+  }
+  // Full ranges given explicitly give the same volume as no ranges.
+  const r3d::LabelRanges full = r3d::detail::full_ranges(w, h, nd);
+  CHECK(r3d::detail::sgm_cost_volume(left.view(), right.view(), -2, nd, options, &full) ==
+        r3d::detail::sgm_cost_volume(left.view(), right.view(), -2, nd, options));
+}
+
 TEST_CASE("WTA row kernel: every SIMD target is bit-exact with scalar") {
   r3d::test::Rng rng(17);
-  for (const std::size_t nd : {16u, 32u, 48u, 80u}) {
+  for (const int max_n : {1, 2, 3, 5}) {
     const std::size_t w = 37;
-    std::vector<std::uint16_t> sum(w * nd);
+    std::vector<std::int32_t> lo(w);
+    std::vector<std::uint16_t> num(w);
+    std::vector<std::size_t> offset(w + 1, 0);
+    std::ptrdiff_t shift = 0, top = 0;
+    for (std::size_t x = 0; x < w; ++x) {
+      num[x] = static_cast<std::uint16_t>(16 * rng.uniform_int(1, max_n));
+      lo[x] = rng.uniform_int(0, 100);
+      offset[x + 1] = offset[x] + num[x];
+      shift = std::max<std::ptrdiff_t>(shift, lo[x] + num[x] - 1 - static_cast<std::ptrdiff_t>(x));
+      top = std::max<std::ptrdiff_t>(top, static_cast<std::ptrdiff_t>(x) - lo[x]);
+    }
+    const r3d::sgm::RowLabels labels{lo.data(), num.data(), offset.data()};
+    const auto nr = static_cast<std::size_t>(top + shift + 1);
+    std::vector<std::uint16_t> sum(offset[w]);
     for (auto& v : sum) v = static_cast<std::uint16_t>(rng.uniform_int(0, 40));  // small range: many ties
-    std::vector<std::uint16_t> best(w), cost(w), second(w), rc(w + nd - 1, 0xFFFF), rb(w + nd - 1, 0xFFFF);
-    r3d::sgm::scalar::wta_row(sum.data(), w, nd, best.data(), cost.data(), second.data(), rc.data(), rb.data());
+    std::vector<std::uint16_t> best(w), cost(w), second(w), rc(nr, 0xFFFF), rb(nr, 0xFFFF);
+    r3d::sgm::scalar::wta_row(sum.data(), w, labels, best.data(), cost.data(), second.data(), rc.data(), rb.data(),
+                              shift);
     for (const std::int64_t target : r3d::simd_available_targets()) {
       const r3d::ScopedSimdTarget scoped(target);
       CAPTURE(r3d::simd_target_name(target));
-      CAPTURE(nd);
-      std::vector<std::uint16_t> best2(w), cost2(w), second2(w), rc2(w + nd - 1, 0xFFFF), rb2(w + nd - 1, 0xFFFF);
-      r3d::sgm::wta_row(sum.data(), w, nd, best2.data(), cost2.data(), second2.data(), rc2.data(), rb2.data());
+      CAPTURE(max_n);
+      std::vector<std::uint16_t> best2(w), cost2(w), second2(w), rc2(nr, 0xFFFF), rb2(nr, 0xFFFF);
+      r3d::sgm::wta_row(sum.data(), w, labels, best2.data(), cost2.data(), second2.data(), rc2.data(), rb2.data(),
+                        shift);
       CHECK(best2 == best);
       CHECK(cost2 == cost);
       CHECK(second2 == second);
@@ -261,6 +310,142 @@ TEST_CASE("Masked left pixels do not disturb the left-right check of their neigh
         good += lmask(x, y) != 0 && std::abs(result.disparity(x, y) - 10.0F) < 0.5F ? 1 : 0;
     CHECK(good > 0.75 * valid);  // 0.89-0.91 (without the fix: about 0.45)
   }
+}
+
+TEST_CASE("Left-right checks with different image widths and negative disparities") {
+  // Rectified pairs have different widths; the right-to-left match runs on
+  // the mirrored pair, whose disparities are offset by the width difference.
+  const Texture tex(23);
+  const int wl = 150, wr = 190, h = 60;
+  const double d = -7.0;  // x_left - x_right
+  r3d::ImageU16 left(wl, h, 1), right(wr, h, 1);
+  for (int y = 0; y < h; ++y) {
+    for (int x = 0; x < wl; ++x) left(x, y) = to_u16(tex(x, y));
+    for (int x = 0; x < wr; ++x) right(x, y) = to_u16(tex(x + d, y));
+  }
+  for (const int levels : {0, 1}) {
+    for (const bool full : {false, true}) {
+      CAPTURE(levels);
+      CAPTURE(full);
+      r3d::StereoOptions options;
+      options.lr_full_match = full;
+      options.levels = levels;
+      const r3d::DisparityMap result = r3d::match_stereo(left.view(), right.view(), {}, {}, -20, 32, options);
+      CHECK(result.levels == levels);
+      int good = 0;
+      for (int y = 0; y < h; ++y)
+        for (int x = 0; x < wl; ++x) good += std::abs(result.disparity(x, y) - static_cast<float>(d)) < 0.25F ? 1 : 0;
+      CHECK(good > 0.9 * wl * h);
+    }
+  }
+}
+
+TEST_CASE("Per-pixel label ranges from a coarser level") {
+  // Coarse disparities 10 (left half) and 30 (right half), one invalid
+  // coarse pixel, and an invalid region larger than the fill distance.
+  const int wc = 40, hc = 20;
+  r3d::ImageF32 coarse(wc, hc, 1);
+  for (int y = 0; y < hc; ++y)
+    for (int x = 0; x < wc; ++x) coarse(x, y) = x < wc / 2 ? 10.0F : 30.0F;
+  coarse(5, 5) = r3d::kInvalidDisparity;
+  for (int y = 0; y < hc; ++y)
+    for (int x = 30; x < wc; ++x) coarse(x, y) = r3d::kInvalidDisparity;
+  const int w = 2 * wc, h = 2 * hc, dmin = 4, nd = 96;
+  r3d::ImageU8 valid(w, h, 1);
+  valid.fill(255);
+  valid(1, 1) = 0;
+  r3d::StereoOptions options;
+  options.range_radius = 1;
+  options.range_margin = 3;
+  options.range_fill = 4;
+  // A right base image with a wide partner: no clipping.
+  const r3d::LabelRanges r =
+      r3d::detail::ranges_from_coarse(coarse, w, h, valid.view(), {}, 1000, 1, dmin, nd, options);
+  auto covers = [&](int x, int y, int lo, int hi) {  // labels [lo, hi]
+    return r.lo(x, y) <= lo && r.lo(x, y) + r.num(x, y) - 1 >= hi;
+  };
+  for (int y = 0; y < h; ++y)
+    for (int x = 0; x < w; ++x) {
+      CAPTURE(x);
+      CAPTURE(y);
+      CHECK(r.num(x, y) % 16 == 0);
+      CHECK(r.lo(x, y) >= 0);
+      CHECK(r.lo(x, y) + r.num(x, y) <= nd);
+    }
+  // Far from the step: 2 * 10 - dmin +- margin in the smallest range.
+  CHECK(covers(10, 30, 20 - dmin - 3, 20 - dmin + 3));
+  CHECK(r.num(10, 30) == 16);
+  // The invalid coarse pixel takes its neighbours' range.
+  CHECK(covers(10, 10, 20 - dmin - 3, 20 - dmin + 3));
+  CHECK(r.num(10, 10) == 16);
+  // At the step both disparities are searched.
+  CHECK(covers(39, 20, 20 - dmin - 3, 60 - dmin + 3));
+  // Masked pixels get the smallest range.
+  CHECK(r.num(1, 1) == 16);
+  // Fill: a few pixels into the invalid region the right half's range is
+  // used, beyond the fill distance the full range.
+  CHECK(covers(62, 20, 60 - dmin - 3, 60 - dmin + 3));
+  CHECK(r.num(62, 20) == 16);
+  CHECK(r.lo(78, 20) == 0);
+  CHECK(r.num(78, 20) == nd);
+  // A left base image with a partner of the same width: pixel x matches
+  // partner column x - d, so x = 10 (d = 20) has no possible match and the
+  // full ranges of the invalid region are clipped to d <= x.
+  const r3d::LabelRanges c =
+      r3d::detail::ranges_from_coarse(coarse, w, h, valid.view(), {}, w, -1, dmin, nd, options);
+  CHECK(c.num(10, 30) == 16);
+  CHECK(c.lo(30, 30) <= 20 - dmin - 3);
+  CHECK(c.lo(30, 30) + c.num(30, 30) - 1 >= 20 - dmin + 3);
+  CHECK(c.lo(78, 20) + c.num(78, 20) - 1 < 78 - dmin + 16);
+}
+
+TEST_CASE("Hierarchical matching equals full-range matching on a wide disparity range") {
+  // Two slanted planes with a large depth step: the foreground (x < 300)
+  // has disparities around 150, the background around 46, of 256 labels.
+  const Texture tex(29), hidden(31);
+  const int w = 480, h = 300, step = 300;
+  auto d_fg = [](double x, double y) { return 150.0 + 0.1 * y - 0.05 * x; };
+  auto d_bg = [](double x, double) { return 40.0 + 0.02 * x; };
+  r3d::ImageU16 left(w, h, 1), right(w, h, 1);
+  r3d::ImageF32 gt(w, h, 1);
+  for (int y = 0; y < h; ++y) {
+    for (int x = 0; x < w; ++x) {
+      left(x, y) = to_u16(tex(x, y));
+      gt(x, y) = static_cast<float>(x < step ? d_fg(x, y) : d_bg(x, y));
+      // Right pixel x shows the foreground point with x_left - d_fg = x if
+      // it exists (it occludes), else the background point; background
+      // points hidden in the left view (x_left < step) have their own texture.
+      double xf = x;
+      for (int it = 0; it < 30; ++it) xf = x + d_fg(xf, y);
+      if (xf < step) {
+        right(x, y) = to_u16(tex(xf, y));
+        continue;
+      }
+      double xb = x;
+      for (int it = 0; it < 30; ++it) xb = x + d_bg(xb, y);
+      right(x, y) = to_u16(xb >= step ? tex(xb, y) : hidden(xb, y));
+    }
+  }
+  // Score the matchable, non-occluded parts (the left border lacks matches).
+  r3d::ImageU8 mask(w, h, 1);
+  for (int y = 0; y < h; ++y)
+    for (int x = 200; x < w; ++x) mask(x, y) = std::abs(x - step) > 12 ? 255 : 0;
+  r3d::StereoOptions options;
+  options.levels = 0;
+  const r3d::DisparityMap full = r3d::match_stereo(left.view(), right.view(), {}, {}, 0, 256, options);
+  options.levels = -1;
+  const r3d::DisparityMap hier = r3d::match_stereo(left.view(), right.view(), {}, {}, 0, 256, options);
+  CHECK(full.levels == 0);
+  CHECK(hier.levels >= 1);
+  CHECK(hier.cells * 3 < full.cells);
+  const r3d::DisparityErrorStats sf = r3d::evaluate_disparity(full.disparity, gt, mask.view());
+  const r3d::DisparityErrorStats sh = r3d::evaluate_disparity(hier.disparity, gt, mask.view());
+  CHECK(sf.density > 0.95);
+  CHECK(sf.bad1 < 0.01);
+  CHECK(sh.density > 0.95);
+  CHECK(sh.bad1 < 0.01);
+  CHECK(sh.density >= sf.density - 0.01);
+  CHECK(sh.avg_error <= sf.avg_error + 0.02);
 }
 
 TEST_CASE("Speckle and median filters") {

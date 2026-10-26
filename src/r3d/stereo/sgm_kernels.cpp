@@ -9,47 +9,102 @@
 
 #ifndef R3D_STEREO_SGM_PIXEL
 #define R3D_STEREO_SGM_PIXEL
+#include <algorithm>
+
 namespace r3d::sgm::detail {
 
 // Inputs and outputs of the four paths at one pixel.
 struct PixelPaths {
-  const std::uint16_t* prev[4];  // label 0 of the predecessor
+  const std::uint16_t* prev[4];  // label 0 of this pixel's range in the predecessor's costs
   std::uint16_t* cur[4];         // label 0 of this pixel
   std::uint16_t min_prev[4];
   std::uint16_t penalty[4];      // min_prev + P2, saturated
   std::uint16_t min_cur[4];
 };
 
-// Pointers for pixel x; returns the slot of path 0 written at this pixel.
-inline void setup_pixel(const SgmRowArgs& a, std::size_t x, bool first, std::uint16_t* horiz_prev,
+// Moves path costs for align_predecessor (Mover::fill: kSentinel at
+// g[-1 .. num], g has kLabelOffset elements of padding on both sides;
+// Mover::copy: n elements).
+struct ScalarMover {
+  static void fill(std::uint16_t* g, std::size_t num) { std::fill(g - 1, g + num + 1, kSentinel); }
+  static void copy(const std::uint16_t* src, std::uint16_t* dst, std::size_t n) { std::copy(src, src + n, dst); }
+};
+
+// Predecessor path costs aligned to the labels [lo, lo + num) of the current
+// pixel, including the d - 1 / d + 1 neighbours at both ends. Points into q's
+// buffer if q's labels cover the range; otherwise the overlap is copied into
+// `buffer` (labels missing in q read as kSentinel).
+template <class Mover>
+inline const std::uint16_t* align_predecessor(const std::uint16_t* q, std::int32_t q_lo, std::size_t q_num,
+                                              std::int32_t lo, std::size_t num, std::uint16_t* buffer) {
+  const auto q_hi = q_lo + static_cast<std::int32_t>(q_num);  // exclusive
+  const auto hi = lo + static_cast<std::int32_t>(num);
+  if (lo >= q_lo && hi <= q_hi) {
+    return q + (lo - q_lo);  // the sentinels of q cover the ends
+  }
+  std::uint16_t* g = buffer + kLabelOffset;
+  Mover::fill(g, num);
+  const std::int32_t first = std::max(lo - 1, q_lo);
+  const std::int32_t last = std::min(hi + 1, q_hi);  // exclusive
+  if (first < last) {
+    Mover::copy(q + (first - q_lo), g + (first - lo), static_cast<std::size_t>(last - first));
+  }
+  return g;
+}
+
+// Pointers for pixel x (i-th pixel of the pass).
+template <class Mover>
+inline void setup_pixel(const SgmRowArgs& a, std::size_t x, std::size_t i, const std::uint16_t* horiz_prev,
                         std::uint16_t horiz_min, std::uint16_t* horiz_cur, PixelPaths& p) {
   const std::size_t w = a.width;
-  const std::size_t stride = path_stride(a.num_disp);
+  const std::size_t stride = path_stride(a.max_num);
+  const std::int32_t lo = a.labels.lo[x];
+  const std::size_t num = a.labels.num[x];
   const std::uint16_t* start = a.scratch + kLabelOffset;
-  auto prev_of = [&](std::size_t path, std::ptrdiff_t xp, std::size_t slot) {
-    if (xp < 0 || xp >= static_cast<std::ptrdiff_t>(w)) {
-      p.prev[slot] = start;
-      p.min_prev[slot] = 0;
-    } else {
-      const auto i = path * w + static_cast<std::size_t>(xp);
-      p.prev[slot] = a.prev + i * stride + kLabelOffset;
-      p.min_prev[slot] = a.prev_min[i];
-    }
-  };
-  const auto xs = static_cast<std::ptrdiff_t>(x);
-  if (first) {
+  std::uint16_t* align_buffers = a.scratch + 3 * stride;
+  if (i == 0) {
     p.prev[0] = start;
     p.min_prev[0] = 0;
   } else {
-    p.prev[0] = horiz_prev + kLabelOffset;
+    const std::size_t xq = a.direction > 0 ? x - 1 : x + 1;
+    p.prev[0] = align_predecessor<Mover>(horiz_prev + kLabelOffset, a.labels.lo[xq], a.labels.num[xq], lo, num,
+                                         align_buffers);
     p.min_prev[0] = horiz_min;
   }
-  prev_of(0, xs, 1);
-  prev_of(1, xs - a.direction, 2);
-  prev_of(2, xs + a.direction, 3);
+  if (a.has_prev) {
+    const std::size_t prev_size = a.prev_labels.path_size(w);
+    const auto xs = static_cast<std::ptrdiff_t>(x);
+    const std::ptrdiff_t xps[3] = {xs, xs - a.direction, xs + a.direction};
+    for (std::size_t path = 0; path < 3; ++path) {
+      const std::ptrdiff_t xp = xps[path];
+      if (xp < 0 || xp >= static_cast<std::ptrdiff_t>(w)) {
+        p.prev[path + 1] = start;
+        p.min_prev[path + 1] = 0;
+        continue;
+      }
+      const auto xq = static_cast<std::size_t>(xp);
+      const std::uint16_t* q = a.prev + path * prev_size + a.prev_labels.path_offset(xq);
+      p.prev[path + 1] = align_predecessor<Mover>(q, a.prev_labels.lo[xq], a.prev_labels.num[xq], lo, num,
+                                                  align_buffers + (path + 1) * stride);
+      p.min_prev[path + 1] = a.prev_min[path * w + xq];
+    }
+  } else {
+    for (std::size_t k = 1; k < 4; ++k) {
+      p.prev[k] = start;
+      p.min_prev[k] = 0;
+    }
+  }
   p.cur[0] = horiz_cur + kLabelOffset;
+  const std::size_t cur_size = a.labels.path_size(w);
+  const std::size_t cur_offset = a.labels.path_offset(x);
   for (std::size_t k = 1; k < 4; ++k) {
-    p.cur[k] = a.cur + ((k - 1) * w + x) * stride + kLabelOffset;
+    p.cur[k] = a.cur + (k - 1) * cur_size + cur_offset;
+  }
+  // Sentinels of the vertical paths; those of path 0 are set by run_row
+  // (writing them here would stall the next pixel's loads).
+  for (std::size_t k = 1; k < 4; ++k) {
+    p.cur[k][-1] = kSentinel;
+    p.cur[k][num] = kSentinel;
   }
   for (std::size_t k = 0; k < 4; ++k) {
     const unsigned pen = unsigned{p.min_prev[k]} + a.p2[k * w + x];
@@ -58,18 +113,31 @@ inline void setup_pixel(const SgmRowArgs& a, std::size_t x, bool first, std::uin
   }
 }
 
-// Runs the row with `pixel(cost, sum, paths)` doing the label loop.
-template <class PixelFn>
+// Runs the row with `pixel(cost, sum, num, paths)` doing the label loop.
+template <class Mover, class PixelFn>
 inline void run_row(const SgmRowArgs& a, PixelFn&& pixel) {
   const std::size_t w = a.width;
-  const std::size_t stride = path_stride(a.num_disp);
+  const std::size_t stride = path_stride(a.max_num);
   std::uint16_t* horiz[2] = {a.scratch + stride, a.scratch + 2 * stride};
+  // Path 0 alternates between two buffers. The sentinel before label 0 never
+  // moves; the one after the last label moves only when the label count
+  // differs from the buffer's previous pixel.
+  std::size_t horiz_num[2] = {0, 0};
+  for (std::uint16_t* h : horiz) {
+    h[kLabelOffset - 1] = kSentinel;
+  }
   std::uint16_t horiz_min = 0;
   for (std::size_t i = 0; i < w; ++i) {
     const std::size_t x = a.direction > 0 ? i : w - 1 - i;
-    PixelPaths p{};
-    setup_pixel(a, x, i == 0, horiz[(i + 1) & 1], horiz_min, horiz[i & 1], p);
-    pixel(a.cost + x * a.num_disp, a.sum + x * a.num_disp, p);
+    const std::size_t num = a.labels.num[x];
+    if (horiz_num[i & 1] != num) {
+      horiz[i & 1][kLabelOffset + num] = kSentinel;
+      horiz_num[i & 1] = num;
+    }
+    PixelPaths p;
+    setup_pixel<Mover>(a, x, i, horiz[(i + 1) & 1], horiz_min, horiz[i & 1], p);
+    const std::size_t off = a.labels.offset[x];
+    pixel(a.cost + off, a.sum + off, std::size_t{a.labels.num[x]}, p);
     horiz_min = p.min_cur[0];
     for (std::size_t k = 1; k < 4; ++k) {
       a.cur_min[(k - 1) * w + x] = p.min_cur[k];
@@ -87,7 +155,7 @@ namespace HWY_NAMESPACE {
 namespace hn = hwy::HWY_NAMESPACE;
 
 void CensusCosts(const std::uint64_t* HWY_RESTRICT left, const std::uint64_t* HWY_RESTRICT rev, std::size_t width,
-                 std::size_t num_disp, std::uint16_t* HWY_RESTRICT cost) {
+                 const RowLabels& labels, std::int32_t rev_origin, std::uint16_t* HWY_RESTRICT cost) {
   // At most 16 lanes, so that every label count (a multiple of 16) is a
   // whole number of vectors.
   const hn::CappedTag<std::uint64_t, kLabelAlign> d64;
@@ -95,9 +163,10 @@ void CensusCosts(const std::uint64_t* HWY_RESTRICT left, const std::uint64_t* HW
   const std::size_t lanes = hn::Lanes(d64);
   for (std::size_t x = 0; x < width; ++x) {
     const auto l = hn::Set(d64, left[x]);
-    const std::uint64_t* r = rev + (width - 1 - x);
-    std::uint16_t* c = cost + x * num_disp;
-    for (std::size_t d = 0; d < num_disp; d += lanes) {
+    const std::uint64_t* r = rev + (static_cast<std::ptrdiff_t>(width - 1 - x) + labels.lo[x] - rev_origin);
+    std::uint16_t* c = cost + labels.offset[x];
+    const std::size_t num = labels.num[x];
+    for (std::size_t d = 0; d < num; d += lanes) {
       const auto bits = hn::PopulationCount(hn::Xor(l, hn::LoadU(d64, r + d)));
       hn::StoreU(hn::TruncateTo(d16, bits), d16, c + d);
     }
@@ -158,12 +227,36 @@ HWY_INLINE void PixelLabels(DT dt, std::size_t d0, std::size_t d1, const std::ui
   }
 }
 
+// Vector moves for align_predecessor (see detail::ScalarMover).
+struct VectorMover {
+  static void fill(std::uint16_t* g, std::size_t num) {
+    // [g - kLabelOffset, g + num + kLabelOffset) in whole vectors of kLabelAlign lanes.
+    const hn::CappedTag<std::uint16_t, kLabelAlign> d;
+    const auto s = hn::Set(d, kSentinel);
+    std::uint16_t* p = g - kLabelOffset;
+    for (std::size_t k = 0; k < num + 2 * kLabelOffset; k += hn::Lanes(d)) {
+      hn::StoreU(s, d, p + k);
+    }
+  }
+  static void copy(const std::uint16_t* HWY_RESTRICT src, std::uint16_t* HWY_RESTRICT dst, std::size_t n) {
+    const hn::CappedTag<std::uint16_t, kLabelAlign> d;
+    const std::size_t lanes = hn::Lanes(d);
+    std::size_t k = 0;
+    for (; k + lanes <= n; k += lanes) {
+      hn::StoreU(hn::LoadU(d, src + k), d, dst + k);
+    }
+    if (k < n) {
+      hn::StoreN(hn::LoadN(d, src + k, n - k), d, dst + k, n - k);
+    }
+  }
+};
+
 void SgmRow(const SgmRowArgs& a) {
   const hn::ScalableTag<std::uint16_t> d;
   const hn::CappedTag<std::uint16_t, kLabelAlign> d_tail;
-  const std::size_t n = a.num_disp;
-  const std::size_t main_end = n - n % hn::Lanes(d);
-  detail::run_row(a, [&](const std::uint16_t* cost, std::uint16_t* sum, detail::PixelPaths& p) {
+  const std::size_t lanes = hn::Lanes(d);
+  detail::run_row<VectorMover>(a, [&](const std::uint16_t* cost, std::uint16_t* sum, std::size_t n, detail::PixelPaths& p) {
+    const std::size_t main_end = n - n % lanes;
     PixelLabels(d, 0, main_end, cost, sum, a.p1, a.accumulate, p);
     PixelLabels(d_tail, main_end, n, cost, sum, a.p1, a.accumulate, p);
   });
@@ -216,10 +309,11 @@ HWY_INLINE std::uint16_t RangeMinExcept(DT dt, const std::uint16_t* HWY_RESTRICT
   return hn::ReduceMin(dt, acc);
 }
 
-// Right-image WTA update of labels [d0, d1) of left column x.
+// Right-image WTA update of labels [d0, d1) of one left pixel; label j of
+// the pixel (absolute label first + j) belongs to right index top - j.
 template <class DT>
 HWY_INLINE void RightUpdate(DT dt, const std::uint16_t* HWY_RESTRICT s, std::size_t d0, std::size_t d1,
-                            std::size_t top, std::uint16_t* HWY_RESTRICT right_cost,
+                            std::size_t top, std::uint16_t first, std::uint16_t* HWY_RESTRICT right_cost,
                             std::uint16_t* HWY_RESTRICT right_best) {
   const std::size_t lanes = hn::Lanes(dt);
   for (std::size_t d = d0; d < d1; d += lanes) {
@@ -230,34 +324,35 @@ HWY_INLINE void RightUpdate(DT dt, const std::uint16_t* HWY_RESTRICT s, std::siz
     const auto rb = hn::Reverse(dt, hn::LoadU(dt, right_best + base));
     const auto better = hn::Lt(v, rc);
     hn::StoreU(hn::Reverse(dt, hn::IfThenElse(better, v, rc)), dt, right_cost + base);
-    hn::StoreU(hn::Reverse(dt, hn::IfThenElse(better, hn::Iota(dt, static_cast<std::uint16_t>(d)), rb)), dt,
+    hn::StoreU(hn::Reverse(dt, hn::IfThenElse(better, hn::Iota(dt, static_cast<std::uint16_t>(first + d)), rb)), dt,
                right_best + base);
   }
 }
 
-void WtaRow(const std::uint16_t* HWY_RESTRICT sum, std::size_t width, std::size_t num_disp,
+void WtaRow(const std::uint16_t* HWY_RESTRICT sum, std::size_t width, const RowLabels& labels,
             std::uint16_t* HWY_RESTRICT best, std::uint16_t* HWY_RESTRICT best_cost, std::uint16_t* HWY_RESTRICT second,
-            std::uint16_t* HWY_RESTRICT right_cost, std::uint16_t* HWY_RESTRICT right_best) {
+            std::uint16_t* HWY_RESTRICT right_cost, std::uint16_t* HWY_RESTRICT right_best, std::ptrdiff_t right_shift) {
   const hn::ScalableTag<std::uint16_t> d;
   const hn::CappedTag<std::uint16_t, kLabelAlign> d_tail;
-  const std::size_t n = num_disp;
-  const std::size_t main_end = n - n % hn::Lanes(d);
   for (std::size_t x = 0; x < width; ++x) {
-    const std::uint16_t* s = sum + x * n;
+    const std::size_t n = labels.num[x];
+    const std::size_t main_end = n - n % hn::Lanes(d);
+    const std::uint16_t* s = sum + labels.offset[x];
     const std::uint16_t m = RangeMin(d_tail, s, main_end, n, RangeMin(d, s, 0, main_end, 0xFFFF));
     std::size_t k = FindValue(d, s, 0, main_end, m);
     if (k == main_end) {
       k = FindValue(d_tail, s, main_end, n, m);
     }
-    best[x] = static_cast<std::uint16_t>(k);
+    const auto first = static_cast<std::uint16_t>(labels.lo[x]);
+    best[x] = static_cast<std::uint16_t>(first + k);
     best_cost[x] = m;
     const auto lo = static_cast<std::uint16_t>(k > 0 ? k - 1 : 0);
     const auto hi = static_cast<std::uint16_t>(k + 1);
     second[x] = RangeMinExcept(d_tail, s, main_end, n, lo, hi, RangeMinExcept(d, s, 0, main_end, lo, hi, 0xFFFF));
     if (right_cost != nullptr) {
-      const std::size_t top = x + n - 1;
-      RightUpdate(d, s, 0, main_end, top, right_cost, right_best);
-      RightUpdate(d_tail, s, main_end, n, top, right_cost, right_best);
+      const auto top = static_cast<std::size_t>(static_cast<std::ptrdiff_t>(x) - labels.lo[x] + right_shift);
+      RightUpdate(d, s, 0, main_end, top, first, right_cost, right_best);
+      RightUpdate(d_tail, s, main_end, n, top, first, right_cost, right_best);
     }
   }
 }
@@ -269,7 +364,6 @@ HWY_AFTER_NAMESPACE();
 
 #if HWY_ONCE
 
-#include <algorithm>
 #include <bit>
 
 namespace r3d::sgm {
@@ -280,19 +374,18 @@ HWY_EXPORT(WtaRow);
 
 namespace scalar {
 
-void census_costs(const std::uint64_t* left, const std::uint64_t* rev, std::size_t width, std::size_t num_disp,
-                  std::uint16_t* cost) {
+void census_costs(const std::uint64_t* left, const std::uint64_t* rev, std::size_t width, const RowLabels& labels,
+                  std::int32_t rev_origin, std::uint16_t* cost) {
   for (std::size_t x = 0; x < width; ++x) {
-    const std::uint64_t* r = rev + (width - 1 - x);
-    for (std::size_t d = 0; d < num_disp; ++d) {
-      cost[x * num_disp + d] = static_cast<std::uint16_t>(std::popcount(left[x] ^ r[d]));
+    const std::uint64_t* r = rev + (static_cast<std::ptrdiff_t>(width - 1 - x) + labels.lo[x] - rev_origin);
+    for (std::size_t d = 0; d < labels.num[x]; ++d) {
+      cost[labels.offset[x] + d] = static_cast<std::uint16_t>(std::popcount(left[x] ^ r[d]));
     }
   }
 }
 
 void sgm_row(const SgmRowArgs& a) {
-  const std::size_t n = a.num_disp;
-  detail::run_row(a, [&](const std::uint16_t* cost, std::uint16_t* sum, detail::PixelPaths& p) {
+  detail::run_row<detail::ScalarMover>(a, [&](const std::uint16_t* cost, std::uint16_t* sum, std::size_t n, detail::PixelPaths& p) {
     for (std::size_t d = 0; d < n; ++d) {
       unsigned total = 0;
       for (std::size_t k = 0; k < 4; ++k) {
@@ -309,31 +402,35 @@ void sgm_row(const SgmRowArgs& a) {
   });
 }
 
-void wta_row(const std::uint16_t* sum, std::size_t width, std::size_t num_disp, std::uint16_t* best,
-             std::uint16_t* best_cost, std::uint16_t* second, std::uint16_t* right_cost, std::uint16_t* right_best) {
+void wta_row(const std::uint16_t* sum, std::size_t width, const RowLabels& labels, std::uint16_t* best,
+             std::uint16_t* best_cost, std::uint16_t* second, std::uint16_t* right_cost, std::uint16_t* right_best,
+             std::ptrdiff_t right_shift) {
   for (std::size_t x = 0; x < width; ++x) {
-    const std::uint16_t* s = sum + x * num_disp;
+    const std::uint16_t* s = sum + labels.offset[x];
+    const std::size_t n = labels.num[x];
     std::size_t k_best = 0;
-    for (std::size_t k = 1; k < num_disp; ++k) {
+    for (std::size_t k = 1; k < n; ++k) {
       if (s[k] < s[k_best]) {
         k_best = k;
       }
     }
     std::uint16_t sec = 0xFFFF;
-    for (std::size_t k = 0; k < num_disp; ++k) {
+    for (std::size_t k = 0; k < n; ++k) {
       if (k + 1 < k_best || k > k_best + 1) {
         sec = std::min(sec, s[k]);
       }
     }
-    best[x] = static_cast<std::uint16_t>(k_best);
+    const std::int32_t lo = labels.lo[x];
+    best[x] = static_cast<std::uint16_t>(lo + static_cast<std::int32_t>(k_best));
     best_cost[x] = s[k_best];
     second[x] = sec;
     if (right_cost != nullptr) {
-      for (std::size_t k = 0; k < num_disp; ++k) {
-        const std::size_t i = x + num_disp - 1 - k;
+      for (std::size_t k = 0; k < n; ++k) {
+        const auto i = static_cast<std::size_t>(static_cast<std::ptrdiff_t>(x) - lo - static_cast<std::ptrdiff_t>(k) +
+                                                right_shift);
         if (s[k] < right_cost[i]) {
           right_cost[i] = s[k];
-          right_best[i] = static_cast<std::uint16_t>(k);
+          right_best[i] = static_cast<std::uint16_t>(lo + static_cast<std::int32_t>(k));
         }
       }
     }
@@ -342,14 +439,15 @@ void wta_row(const std::uint16_t* sum, std::size_t width, std::size_t num_disp, 
 
 }  // namespace scalar
 
-void wta_row(const std::uint16_t* sum, std::size_t width, std::size_t num_disp, std::uint16_t* best,
-             std::uint16_t* best_cost, std::uint16_t* second, std::uint16_t* right_cost, std::uint16_t* right_best) {
-  HWY_DYNAMIC_DISPATCH(WtaRow)(sum, width, num_disp, best, best_cost, second, right_cost, right_best);
+void wta_row(const std::uint16_t* sum, std::size_t width, const RowLabels& labels, std::uint16_t* best,
+             std::uint16_t* best_cost, std::uint16_t* second, std::uint16_t* right_cost, std::uint16_t* right_best,
+             std::ptrdiff_t right_shift) {
+  HWY_DYNAMIC_DISPATCH(WtaRow)(sum, width, labels, best, best_cost, second, right_cost, right_best, right_shift);
 }
 
-void census_costs(const std::uint64_t* left, const std::uint64_t* rev, std::size_t width, std::size_t num_disp,
-                  std::uint16_t* cost) {
-  HWY_DYNAMIC_DISPATCH(CensusCosts)(left, rev, width, num_disp, cost);
+void census_costs(const std::uint64_t* left, const std::uint64_t* rev, std::size_t width, const RowLabels& labels,
+                  std::int32_t rev_origin, std::uint16_t* cost) {
+  HWY_DYNAMIC_DISPATCH(CensusCosts)(left, rev, width, labels, rev_origin, cost);
 }
 
 void sgm_row(const SgmRowArgs& args) { HWY_DYNAMIC_DISPATCH(SgmRow)(args); }

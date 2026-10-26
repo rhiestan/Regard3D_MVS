@@ -5,13 +5,16 @@ Multi-view stereo densification for [OpenMVG](https://github.com/openMVG/openMVG
 scale-annotated point cloud, which is meant to be meshed and textured with external tools (PoissonRecon,
 FSSR, texrecon).
 
-Status: **Phase 2** (two-view Census-SGM). Done so far:
+Status: **Phase 3** (hierarchical two-view Census-SGM). Done so far:
 
 - Phase 1: OpenMVG `sfm_data.json` / `.bin` and COLMAP text import, OpenMVG camera models, undistortion,
   image pyramids, stereo pair selection, PLY exports for visual checks.
 - Phase 2: calibrated rectification, 9x7 Census, 8-path SGM over the full disparity range with tiling,
   sub-pixel disparities, left-right check and filters (SIMD kernels bit-exact with scalar), Middlebury
   evaluation, and one point cloud per stereo pair.
+- Phase 3: hierarchical matching with per-pixel disparity ranges from the coarser level, full
+  right-to-left consistency check, tiles admitted by a memory budget (`--memory-budget`); 20+ MP pairs
+  with thousands of disparities in seconds.
 
 Design and IP decisions are logged in [docs/DECISIONS.md](docs/DECISIONS.md).
 

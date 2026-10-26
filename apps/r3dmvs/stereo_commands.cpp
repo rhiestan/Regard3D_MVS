@@ -38,7 +38,8 @@ std::map<std::string, std::string> read_calib(const fs::path& path) {
 struct SceneResult {
   std::string name;
   double seconds = 0.0;
-  double mcells_per_s = 0.0;
+  double mcells_per_s = 0.0;     // full-range cells per second
+  double cells_per_pixel = 0.0;  // aggregated cells (all levels) per pixel
   bool has_gt = false;
   r3d::DisparityErrorStats nonocc;        // sparse estimate, non-occluded pixels
   r3d::DisparityErrorStats nonocc_dense;  // holes filled
@@ -66,8 +67,9 @@ SceneResult match_scene(const StereoArgs& args, const fs::path& left_path, const
       result = r3d::match_stereo(left.view(), right.view(), {}, {}, dmin, ndisp, args.options);
     }
     res.seconds = watch.elapsed_seconds() / std::max(1, args.repeat);
-    res.mcells_per_s =
-        static_cast<double>(left.width()) * left.height() * result.num_disparities / res.seconds * 1e-6;
+    const double pixels = static_cast<double>(left.width()) * left.height();
+    res.mcells_per_s = pixels * result.num_disparities / res.seconds * 1e-6;
+    res.cells_per_pixel = static_cast<double>(result.cells) / pixels;
   }
 
   const fs::path gt_path = gt_dir / "disp0GT.pfm";
@@ -113,14 +115,14 @@ double middlebury_weight(const std::string& name) {
 }
 
 void print_header() {
-  std::printf("%-12s %7s %8s | %7s %6s %6s %6s | %6s %6s %6s | %6s\n", "scene", "time s", "Mcell/s", "density",
-              "bad1", "bad2", "avgerr", "bad2", "bad4", "avgerr", "bad2");
-  std::printf("%-12s %7s %8s | %28s | %20s | %6s\n", "", "", "", "non-occluded, estimates only",
+  std::printf("%-12s %7s %8s %6s | %7s %6s %6s %6s | %6s %6s %6s | %6s\n", "scene", "time s", "Mcell/s", "cells",
+              "density", "bad1", "bad2", "avgerr", "bad2", "bad4", "avgerr", "bad2");
+  std::printf("%-12s %7s %8s %6s | %28s | %20s | %6s\n", "", "", "", "/pixel", "non-occluded, estimates only",
               "non-occluded, filled", "all");
 }
 
 void print_row(const SceneResult& r) {
-  std::printf("%-12s %7.3f %8.1f", r.name.c_str(), r.seconds, r.mcells_per_s);
+  std::printf("%-12s %7.3f %8.1f %6.1f", r.name.c_str(), r.seconds, r.mcells_per_s, r.cells_per_pixel);
   if (r.has_gt) {
     std::printf(" | %6.1f%% %5.1f%% %5.1f%% %6.2f | %5.1f%% %5.1f%% %6.2f | %5.1f%%", 100 * r.nonocc.density,
                 100 * r.nonocc.bad1, 100 * r.nonocc.bad2, r.nonocc.avg_error, 100 * r.nonocc_dense.bad2,
@@ -139,10 +141,20 @@ void add_matcher_options(CLI::App& command, r3d::StereoOptions& o) {
       ->capture_default_str();
   command.add_option("--uniqueness", o.uniqueness, "Uniqueness margin (0 = off)")->capture_default_str();
   command.add_option("--lr-diff", o.lr_max_diff, "Left-right check tolerance (< 0: off)")->capture_default_str();
-  command.add_flag("--lr-full", o.lr_full_match, "Left-right check against a full right-to-left match");
+  command.add_flag("--lr-full,!--lr-diagonal", o.lr_full_match,
+                   "Left-right check against a full right-to-left match (default) or against the right "
+                   "disparities of the same cost volume (faster)");
   command.add_option("--speckle-size", o.speckle_size, "Minimum segment size (0 = off)")->capture_default_str();
   command.add_option("--speckle-diff", o.speckle_diff, "Disparity step between segments")->capture_default_str();
   command.add_flag("!--no-median", o.median, "Disable the 3x3 median filter");
+  command.add_option("--levels", o.levels, "Coarser pyramid levels (-1: automatic, 0: full range only)")
+      ->capture_default_str();
+  command.add_option("--range-radius", o.range_radius, "Coarse window radius of the per-pixel ranges")
+      ->capture_default_str();
+  command.add_option("--range-margin", o.range_margin, "Labels added on each side of the per-pixel ranges")
+      ->capture_default_str();
+  command.add_option("--range-fill", o.range_fill, "Coarse pixels to fill ranges of pixels without disparity")
+      ->capture_default_str();
   command.add_option("--tile-size", o.tile_size, "Tile core size")->capture_default_str();
   command.add_option("--tile-margin", o.tile_margin, "Discarded tile border")->capture_default_str();
   command.add_option("--tile-blend", o.tile_blend, "Tile blending zone")->capture_default_str();
@@ -151,6 +163,11 @@ void add_matcher_options(CLI::App& command, r3d::StereoOptions& o) {
           {"none", r3d::SubpixelMethod::none},
           {"parabola", r3d::SubpixelMethod::parabola},
           {"equiangular", r3d::SubpixelMethod::equiangular}}));
+  command
+      .add_option_function<std::size_t>(
+          "--memory-budget", [&o](std::size_t mb) { o.memory_budget = mb << 20; },
+          "Memory for the tiles matched at once, in MB (default 2048)")
+      ->check(CLI::Range(std::size_t{16}, std::size_t{1} << 24));
   command.add_flag("--scalar", o.scalar_kernels, "Use the scalar reference kernels");
 }
 
@@ -217,6 +234,7 @@ void run_stereo(const StereoArgs& args) {
     print_row(r);
     mean.seconds += r.seconds / static_cast<double>(scenes.size());
     mean.mcells_per_s += r.mcells_per_s / static_cast<double>(scenes.size());
+    mean.cells_per_pixel += r.cells_per_pixel / static_cast<double>(scenes.size());
     if (r.has_gt) {
       const double wgt = middlebury_weight(r.name);
       gt_weight += wgt;
