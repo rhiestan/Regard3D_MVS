@@ -6,9 +6,11 @@
 #include <vector>
 
 #include "r3d/core/error.hpp"
+#include "r3d/core/thread_pool.hpp"
 #include "r3d/core/timer.hpp"
 #include "r3d/io/image_io.hpp"
 #include "r3d/io/ply.hpp"
+#include "r3d/rectify/rectification.hpp"
 #include "r3d/select/view_selection.hpp"
 #include "stereo_commands.hpp"
 
@@ -17,6 +19,20 @@ namespace r3dmvs {
 namespace {
 
 std::filesystem::path utf8_path(const std::string& s) { return std::filesystem::path(std::u8string(s.begin(), s.end())); }
+
+// Grey image of a view resampled onto its depth map grid, in 8-bit grey levels.
+r3d::ImageF32 grey_on_grid(const r3d::Scene& scene, std::size_t view, const r3d::PinholeCamera& grid) {
+  const r3d::SceneView& sv = scene.views[view];
+  const r3d::ImageU16 img =
+      r3d::rectify_image(r3d::read_image_u16(sv.image_path, 1), scene.camera_of(view), sv.pose, grid);
+  r3d::ImageF32 out(img.width(), img.height(), 1);
+  for (int y = 0; y < img.height(); ++y) {
+    for (int x = 0; x < img.width(); ++x) {
+      out(x, y) = static_cast<float>(img(x, y)) * (1.0F / 257.0F);
+    }
+  }
+  return out;
+}
 
 }  // namespace
 
@@ -40,6 +56,27 @@ void add_dense_options(CLI::App& command, DenseArgs& args) {
       ->capture_default_str();
   command.add_option("--min-pairs", args.depth.multi_stereo.min_pairs, "Agreeing pairs per pixel")
       ->capture_default_str();
+  command.add_flag("--refine,!--no-refine", args.refine, "Refine depths by patch matching in the images (default)");
+  command.add_option("--refine-radius", args.refinement.radius, "Refinement window half size (pixels)")
+      ->check(CLI::Range(1, 7))
+      ->capture_default_str();
+  command.add_option("--refine-step", args.refinement.step, "Spacing of the refinement window samples")
+      ->check(CLI::Range(1, 7))
+      ->capture_default_str();
+  command.add_option("--refine-iterations", args.refinement.iterations, "Gauss-Newton steps per pixel")
+      ->capture_default_str();
+  command.add_option("--refine-views", args.refinement.max_views, "Neighbouring images used for refinement")
+      ->check(CLI::Range(1, 8))
+      ->capture_default_str();
+  command.add_option("--refine-min-ncc", args.refinement.min_ncc, "NCC a view needs to take part")
+      ->capture_default_str();
+  command.add_option("--refine-blur", args.refinement.blur_sigma, "Gaussian pre-filter of the refinement images (pixels)")
+      ->capture_default_str();
+  command.add_option("--refine-min-gain", args.refinement.min_gain, "Mean NCC gain a refined depth needs")
+      ->capture_default_str();
+  command.add_option("--refine-max-shift", args.refinement.max_shift_px,
+                     "Largest change of a refined depth (pixels in the used views)")
+      ->capture_default_str();
   command.add_option("--min-views", args.consistency.min_views, "Agreeing neighbour views per pixel")
       ->capture_default_str();
   command.add_option("--min-evidence", args.consistency.min_evidence, "Agreeing pairs + agreeing views per pixel (2: two pairs or one other view)")
@@ -59,6 +96,8 @@ void add_dense_options(CLI::App& command, DenseArgs& args) {
   command.add_option("--neighbours", args.consistency.max_neighbours, "Views checked per view")->capture_default_str();
   command.add_option("--edge-erosion", args.consistency.edge_erosion, "Pixels removed at depth discontinuities")
       ->capture_default_str();
+  command.add_flag("--erode-holes,!--no-erode-holes", args.consistency.erode_holes,
+                   "Erode at the border of regions without depth as well");
   command.add_option("--discontinuity", args.consistency.discontinuity, "Relative depth jump of a discontinuity")
       ->capture_default_str();
   command.add_option("--voxel", args.fusion.voxel_size, "Fusion voxel size (0: --voxel-factor x median GSD)")
@@ -114,8 +153,58 @@ void run_dense(const DenseArgs& args, const r3d::Scene& scene) {
     depth_seconds += watch.elapsed_seconds();
   }
 
-  // Stage 2: geometric consistency.
+  // Stage 2: refinement against the neighbouring images (consistency neighbours, best first).
   r3d::Stopwatch watch;
+  double refine_seconds = 0.0;
+  if (args.refine) {
+    std::vector<r3d::ImageF32> grey(maps.size());
+    r3d::parallel_for(0, maps.size(), 1, [&](std::size_t begin, std::size_t end) {
+      for (std::size_t v = begin; v < end; ++v) {
+        if (maps[v].width() > 0) {
+          grey[v] = grey_on_grid(scene, v, maps[v].camera);
+        }
+      }
+    });
+    const double load_seconds = watch.elapsed_seconds();
+    const auto neighbours = r3d::consistency_neighbours(selection, args.refinement.max_views);
+    r3d::RefinementStats total;
+    for (std::size_t v = 0; v < maps.size(); ++v) {
+      if (maps[v].num_valid() == 0) {
+        continue;
+      }
+      const r3d::RefinementImage base = r3d::make_refinement_image(maps[v].camera, grey[v], args.refinement.blur_sigma);
+      std::vector<r3d::RefinementImage> images;
+      images.reserve(neighbours[v].size());
+      for (const std::size_t n : neighbours[v]) {
+        if (grey[n].width() > 0) {
+          images.push_back(r3d::make_refinement_image(maps[n].camera, grey[n], args.refinement.blur_sigma));
+        }
+      }
+      std::vector<const r3d::RefinementImage*> views;
+      for (const r3d::RefinementImage& img : images) {
+        views.push_back(&img);
+      }
+      r3d::RefinementStats st;
+      r3d::refine_depth_map(maps[v], base, views, args.refinement, &st);
+      total.input += st.input;
+      total.refined += st.refined;
+      total.kept += st.kept;
+    }
+    refine_seconds = watch.elapsed_seconds();
+    std::printf("refinement: %zu depths, %zu refined (%.1f%%), images %.1f s, %.1f s\n", total.input, total.refined,
+                100.0 * static_cast<double>(total.refined) / std::max<double>(1.0, static_cast<double>(total.input)),
+                load_seconds, refine_seconds);
+    std::fflush(stdout);
+    if (args.debug_images) {
+      for (std::size_t v = 0; v < maps.size(); ++v) {
+        r3d::write_png(cache_path(v, "_refined.png"), r3d::colorize_depth(maps[v]).view(), 2);
+        r3d::write_depth_map(cache_path(v, "_refined.r3dd"), maps[v]);
+      }
+    }
+  }
+
+  // Stage 3: geometric consistency.
+  watch.restart();
   r3d::ConsistencyStats cst;
   r3d::filter_depth_maps(maps, r3d::consistency_neighbours(selection, args.consistency.max_neighbours),
                          args.consistency, &cst);
@@ -131,7 +220,7 @@ void run_dense(const DenseArgs& args, const r3d::Scene& scene) {
     }
   }
 
-  // Stage 3: fusion. Positions are written as world coordinates; a large
+  // Stage 4: fusion. Positions are written as world coordinates; a large
   // offset (georeferenced scenes) is kept in double precision.
   watch.restart();
   Eigen::Vector3d centre = Eigen::Vector3d::Zero();
@@ -150,8 +239,8 @@ void run_dense(const DenseArgs& args, const r3d::Scene& scene) {
   ply.double_positions = georeferenced;
   ply.comments.push_back("r3dmvs dense cloud");
   r3d::write_ply(utf8_path(args.output), cloud, ply);
-  std::printf("depth maps %.1f s, consistency %.1f s, fusion %.1f s, total %.1f s\n", depth_seconds, filter_seconds,
-              fuse_seconds, total_watch.elapsed_seconds());
+  std::printf("depth maps %.1f s, refinement %.1f s, consistency %.1f s, fusion %.1f s, total %.1f s\n", depth_seconds,
+              refine_seconds, filter_seconds, fuse_seconds, total_watch.elapsed_seconds());
 }
 
 }  // namespace r3dmvs

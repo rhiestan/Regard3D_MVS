@@ -44,7 +44,7 @@ std::vector<std::vector<std::size_t>> consistency_neighbours(const ViewSelection
   return result;
 }
 
-std::size_t erode_depth_edges(DepthMap& map, int radius, double discontinuity) {
+std::size_t erode_depth_edges(DepthMap& map, int radius, double discontinuity, bool holes) {
   if (radius <= 0) {
     return 0;
   }
@@ -64,7 +64,7 @@ std::size_t erode_depth_edges(DepthMap& map, int radius, double discontinuity) {
             return false;
           }
           const float zn = map.depth(nx, ny);
-          return zn > 0.0F && std::abs(zn - z) > jump * std::min(z, zn);
+          return zn > 0.0F ? std::abs(zn - z) > jump * std::min(z, zn) : holes;
         };
         if (differs(x - 1, y) || differs(x + 1, y) || differs(x, y - 1) || differs(x, y + 1)) {
           edge(x, y) = 1;
@@ -120,7 +120,7 @@ void filter_depth_maps(std::vector<DepthMap>& maps, const std::vector<std::vecto
         }
       }
     }
-    st.eroded += erode_depth_edges(m, options.edge_erosion, options.discontinuity);
+    st.eroded += erode_depth_edges(m, options.edge_erosion, options.discontinuity, options.erode_holes);
   }
   // Support of every pixel against the (eroded, unfiltered) neighbours.
   std::vector<ImageU8> support(maps.size());

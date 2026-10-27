@@ -5,7 +5,7 @@ Multi-view stereo densification for [OpenMVG](https://github.com/openMVG/openMVG
 scale-annotated point cloud, which is meant to be meshed and textured with external tools (PoissonRecon,
 FSSR, texrecon).
 
-Status: **Phase 4** (first dense point cloud). Done so far:
+Status: **Phase 5** (depth refinement). Done so far:
 
 - Phase 1: OpenMVG `sfm_data.json` / `.bin` and COLMAP text import, OpenMVG camera models, undistortion,
   image pyramids, stereo pair selection, PLY exports for visual checks.
@@ -19,6 +19,9 @@ Status: **Phase 4** (first dense point cloud). Done so far:
   consistency, voxel fusion into a coloured PLY with normals and point scales. ETH3D training, half
   resolution, F1 at 2 cm: courtyard 0.80, office 0.64, pipes 0.61, terrains 0.82 (COLMAP 4.2 at the same
   resolution: 0.77, 0.37, 0.38, 0.72).
+- Phase 5: patch-based refinement of every depth as a plane (depth and orientation) by Gauss-Newton on
+  the normalised cross-correlation with the neighbouring images, per-pixel view selection, NCC
+  confidence. ETH3D F1 at 2 cm: courtyard 0.81, office 0.64, pipes 0.61, terrains 0.82.
 
 Design and IP decisions are logged in [docs/DECISIONS.md](docs/DECISIONS.md).
 

@@ -36,6 +36,7 @@ struct ConsistencyOptions {
   float min_confidence = 0.0F;    // matcher confidence; lower pixels are removed before the check
   int edge_erosion = 1;           // 0: no erosion
   double discontinuity = 0.05;
+  bool erode_holes = false;       // erode at the border of invalid regions as well
   int max_neighbours = 8;
   bool independent_support = false;
   bool average_depths = true;
@@ -61,7 +62,8 @@ struct ConsistencyStats {
 void filter_depth_maps(std::vector<DepthMap>& maps, const std::vector<std::vector<std::size_t>>& neighbours,
                        const ConsistencyOptions& options = {}, ConsistencyStats* stats = nullptr);
 
-// Removes pixels at depth discontinuities (see ConsistencyOptions); returns the number removed.
-std::size_t erode_depth_edges(DepthMap& map, int radius, double discontinuity);
+// Removes pixels at depth discontinuities (see ConsistencyOptions), and with
+// `holes` also at the border of invalid regions; returns the number removed.
+std::size_t erode_depth_edges(DepthMap& map, int radius, double discontinuity, bool holes = false);
 
 }  // namespace r3d

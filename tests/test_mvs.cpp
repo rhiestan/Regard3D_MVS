@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <vector>
 
@@ -10,6 +11,7 @@
 #include "r3d/mvs/depth_map.hpp"
 #include "r3d/mvs/fusion.hpp"
 #include "r3d/mvs/multi_stereo.hpp"
+#include "r3d/mvs/refinement.hpp"
 #include "r3d/rectify/rectification.hpp"
 #include "test_util.hpp"
 
@@ -304,6 +306,18 @@ TEST_CASE("erode_depth_edges removes both sides of a depth jump") {
   CHECK(r3d::erode_depth_edges(map, 2, 0.05) == 0);  // no jump between valid neighbours left
 }
 
+TEST_CASE("erode_depth_edges optionally erodes hole borders") {
+  r3d::DepthMap map;
+  map.allocate(9, 9);
+  map.depth.fill(2.0F);
+  map.depth(4, 4) = 0.0F;
+  CHECK(r3d::erode_depth_edges(map, 1, 0.05) == 0);
+  CHECK(r3d::erode_depth_edges(map, 1, 0.05, true) == 4);  // the 4-neighbours of the hole
+  CHECK_FALSE(map.valid(3, 4));
+  CHECK(map.valid(3, 3));
+  CHECK(map.valid(0, 0));  // the image border is not a hole
+}
+
 TEST_CASE("Voxel fusion: points on the surface, oriented normals, one point per voxel") {
   const MultiRig rig;
   const Plane plane = test_plane(rig.base);
@@ -360,4 +374,113 @@ TEST_CASE("Depth map file round trip") {
     }
   }
   CHECK(r.pairs(5, 6) == 2);
+}
+
+namespace {
+
+// Smooth texture on a plane (wavelengths of about 4 to 25 pixels in the test
+// cameras), rendered with 4x4 supersampling.
+r3d::ImageF32 render_plane(const r3d::PinholeCamera& cam, const Plane& plane, double phase) {
+  const Eigen::Vector3d u = plane.normal.unitOrthogonal();
+  const Eigen::Vector3d v = plane.normal.cross(u);
+  const std::array<Eigen::Vector3d, 5> waves{Eigen::Vector3d(31.0, 7.0, 0.3), Eigen::Vector3d(-11.0, 23.0, 1.1),
+                                             Eigen::Vector3d(5.0, -13.0, 2.0), Eigen::Vector3d(43.0, 29.0, 0.7),
+                                             Eigen::Vector3d(-37.0, 47.0, 2.9)};
+  r3d::ImageF32 img(cam.intrinsics.width, cam.intrinsics.height, 1);
+  for (int y = 0; y < img.height(); ++y) {
+    for (int x = 0; x < img.width(); ++x) {
+      double acc = 0.0;
+      for (int sy = 0; sy < 4; ++sy) {
+        for (int sx = 0; sx < 4; ++sx) {
+          const Eigen::Vector2d px(x - 0.375 + 0.25 * sx, y - 0.375 + 0.25 * sy);
+          const Eigen::Vector3d dir = cam.unproject(px, 1.0) - cam.pose.center;
+          const Eigen::Vector3d xw = cam.pose.center + plane.intersect(cam.pose.center, dir) * dir;
+          const double pu = (xw - plane.point).dot(u);
+          const double pv = (xw - plane.point).dot(v);
+          for (const Eigen::Vector3d& wv : waves) {
+            acc += std::sin(wv.x() * pu + wv.y() * pv + wv.z() + phase);
+          }
+        }
+      }
+      img(x, y) = static_cast<float>(128.0 + 20.0 * acc / 16.0);
+    }
+  }
+  return img;
+}
+
+double relative_depth_rms(const r3d::DepthMap& map, const r3d::DepthMap& truth, int border) {
+  double sum = 0.0;
+  int n = 0;
+  for (int y = border; y < map.height() - border; ++y) {
+    for (int x = border; x < map.width() - border; ++x) {
+      const double e = (map.depth(x, y) - truth.depth(x, y)) / truth.depth(x, y);
+      sum += e * e;
+      ++n;
+    }
+  }
+  return std::sqrt(sum / n);
+}
+
+}  // namespace
+
+TEST_CASE("Refinement fits slanted planes from stair-stepped depths") {
+  const MultiRig rig;
+  Plane plane;
+  const r3d::PinholeCamera cam0 = rig.grid();
+  plane.normal = (rig.base.view_direction() + rig.base.rotation.transpose() * Eigen::Vector3d(0.8, 0.4, 0.0))
+                     .normalized();  // 42 degrees
+  plane.point = rig.base.center + 5.0 * rig.base.view_direction();
+  const r3d::DepthMap truth = plane_depth_map(cam0, plane, 0, 1);
+  std::vector<r3d::RefinementImage> images;
+  images.push_back(r3d::make_refinement_image(cam0, render_plane(cam0, plane, 0.0)));
+  for (const r3d::Pose& p : rig.partners) {
+    const r3d::PinholeCamera cam{rig.cam.pinhole(), p};
+    images.push_back(r3d::make_refinement_image(cam, render_plane(cam, plane, 0.0)));
+  }
+  const std::vector<const r3d::RefinementImage*> views{&images[1], &images[2], &images[3]};
+
+  // SGM-like input: constant depth per 4x4 block (fronto-parallel steps) plus a
+  // smooth error of up to 1% (about 0.4 px of disparity).
+  r3d::DepthMap map = truth;
+  for (int y = 0; y < map.height(); ++y) {
+    for (int x = 0; x < map.width(); ++x) {
+      const float block = truth.depth(std::min(x / 4 * 4 + 2, map.width() - 1), std::min(y / 4 * 4 + 2, map.height() - 1));
+      map.depth(x, y) = block * static_cast<float>(1.0 + 0.01 * std::sin(x / 9.0) * std::cos(y / 13.0));
+    }
+  }
+  const int border = 12;
+  const double before = relative_depth_rms(map, truth, border);
+
+  SUBCASE("defaults: only clear NCC gains are taken") {
+    r3d::RefinementStats st;
+    r3d::refine_depth_map(map, images[0], views, {}, &st);
+    CHECK(relative_depth_rms(map, truth, border) < before / 3.0);
+    CHECK(st.refined > st.input / 2);
+  }
+  SUBCASE("matching images") {
+    r3d::RefinementOptions opt;
+    opt.min_gain = 0.0;
+    r3d::RefinementStats st;
+    r3d::refine_depth_map(map, images[0], views, opt, &st);
+    const double after = relative_depth_rms(map, truth, border);
+    MESSAGE("relative depth RMS ", before, " -> ", after, ", refined ", st.refined, " of ", st.input);
+    CHECK(st.input == static_cast<std::size_t>(map.width() * map.height()));
+    CHECK(st.refined > st.input * 8 / 10);
+    CHECK(after < before / 5.0);
+    CHECK(map.confidence(160, 120) > 0.9F);
+  }
+  SUBCASE("unrelated images keep the input") {
+    std::vector<r3d::RefinementImage> wrong;
+    for (const r3d::Pose& p : rig.partners) {
+      const r3d::PinholeCamera cam{rig.cam.pinhole(), p};
+      wrong.push_back(r3d::make_refinement_image(cam, render_plane(cam, plane, 1.7)));
+    }
+    const std::vector<const r3d::RefinementImage*> wrong_views{&wrong[0], &wrong[1], &wrong[2]};
+    r3d::RefinementOptions opt;
+    opt.min_ncc = 0.5;
+    r3d::RefinementStats st;
+    r3d::refine_depth_map(map, images[0], wrong_views, opt, &st);
+    CHECK(st.refined < st.input / 20);
+    CHECK(relative_depth_rms(map, truth, border) < before * 1.2);
+  }
 }

@@ -18,6 +18,7 @@ add_library(r3d STATIC
   r3d/mvs/depth_map.cpp
   r3d/mvs/fusion.cpp
   r3d/mvs/multi_stereo.cpp
+  r3d/mvs/refinement.cpp
   r3d/rectify/rectification.cpp
   r3d/scene/scene.cpp
   r3d/scene/undistort.cpp
