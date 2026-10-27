@@ -31,6 +31,7 @@
 #include "r3d/stereo/pair_cloud.hpp"
 #include "r3d/stereo/stereo_matcher.hpp"
 #include "r3d/version.hpp"
+#include "dense_command.hpp"
 #include "stereo_commands.hpp"
 
 namespace {
@@ -357,6 +358,13 @@ int main(int argc, char** argv) {
       ->check(CLI::Range(0.05, 4.0));
   r3dmvs::add_matcher_options(*pair, pair_args.options);
 
+  SceneArgs dense_scene;
+  r3dmvs::DenseArgs dense_args;
+  CLI::App* dense = app.add_subcommand("dense", "Compute the dense point cloud of a scene");
+  dense->add_option("input", dense_scene.input, "sfm_data.json, sfm_data.bin or a COLMAP model directory")->required();
+  dense->add_option("--image-dir", dense_scene.image_dir, "Directory with the images (default: from the scene)");
+  r3dmvs::add_dense_options(*dense, dense_args);
+
   try {
     app.parse(argc, argv);
   } catch (const CLI::ParseError& e) {
@@ -377,6 +385,8 @@ int main(int argc, char** argv) {
       r3dmvs::run_stereo(stereo_args);
     } else if (pair->parsed()) {
       run_pair(pair_args);
+    } else if (dense->parsed()) {
+      r3dmvs::run_dense(dense_args, read_scene(dense_scene));
     }
   } catch (const std::exception& e) {
     r3d::log_error("{}", e.what());

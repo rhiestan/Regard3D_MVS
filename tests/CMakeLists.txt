@@ -7,6 +7,7 @@ add_executable(r3d_tests
   test_color_convert.cpp
   test_image.cpp
   test_image_io.cpp
+  test_mvs.cpp
   test_openmvg_scene.cpp
   test_ply.cpp
   test_pyramid.cpp

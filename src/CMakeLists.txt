@@ -14,6 +14,10 @@ add_library(r3d STATIC
   r3d/io/ply.cpp
   r3d/io/scene_export.cpp
   r3d/io/stb_impl.cpp
+  r3d/mvs/consistency.cpp
+  r3d/mvs/depth_map.cpp
+  r3d/mvs/fusion.cpp
+  r3d/mvs/multi_stereo.cpp
   r3d/rectify/rectification.cpp
   r3d/scene/scene.cpp
   r3d/scene/undistort.cpp

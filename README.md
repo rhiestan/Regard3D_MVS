@@ -5,7 +5,7 @@ Multi-view stereo densification for [OpenMVG](https://github.com/openMVG/openMVG
 scale-annotated point cloud, which is meant to be meshed and textured with external tools (PoissonRecon,
 FSSR, texrecon).
 
-Status: **Phase 3** (hierarchical two-view Census-SGM). Done so far:
+Status: **Phase 4** (first dense point cloud). Done so far:
 
 - Phase 1: OpenMVG `sfm_data.json` / `.bin` and COLMAP text import, OpenMVG camera models, undistortion,
   image pyramids, stereo pair selection, PLY exports for visual checks.
@@ -15,6 +15,10 @@ Status: **Phase 3** (hierarchical two-view Census-SGM). Done so far:
 - Phase 3: hierarchical matching with per-pixel disparity ranges from the coarser level, full
   right-to-left consistency check, tiles admitted by a memory budget (`--memory-budget`); 20+ MP pairs
   with thousands of disparities in seconds.
+- Phase 4: `r3dmvs dense`: per-view multi-stereo depth maps from up to 4 pairs, multi-view geometric
+  consistency, voxel fusion into a coloured PLY with normals and point scales. ETH3D training, half
+  resolution, F1 at 2 cm: courtyard 0.80, office 0.64, pipes 0.61, terrains 0.82 (COLMAP 4.2 at the same
+  resolution: 0.77, 0.37, 0.38, 0.72).
 
 Design and IP decisions are logged in [docs/DECISIONS.md](docs/DECISIONS.md).
 
@@ -26,6 +30,9 @@ r3dmvs scene path/to/sfm_data.bin --pairs --sparse-ply sparse.ply --colors --cam
 # Rectify and match every view with its best partner; rectified images, disparity maps and a
 # coloured point cloud per pair:
 r3dmvs pair path/to/sfm_data.bin --all --out-dir pairs
+
+# Dense point cloud (depth maps are cached in the work directory; --reuse skips matching):
+r3dmvs dense path/to/sfm_data.bin --resolution 0.5 --work-dir work -o dense.ply
 
 # Match a rectified pair, or score the Middlebury 2014 training set (MiddEval3 layout):
 r3dmvs stereo path/to/MiddEval3/trainingH
