@@ -467,7 +467,11 @@ PointCloud fuse_depth_maps(std::size_t count, const DepthMapSource& source, std:
           if (!grid.locate(p, chunk, key)) {
             continue;
           }
-          const std::uint32_t ci = chunk_index.find(chunk)->second;
+          const auto found = chunk_index.find(chunk);
+          if (found == chunk_index.end()) {
+            continue;  // not possible: pass 1 counted every chunk
+          }
+          const std::uint32_t ci = found->second;
           if (ci < first_chunk || ci >= end_chunk) {
             continue;
           }

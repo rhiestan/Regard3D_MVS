@@ -8,6 +8,7 @@
 #include <limits>
 #include <span>
 #include <utility>
+#include <vector>
 
 #include <Eigen/LU>
 
@@ -37,12 +38,15 @@ constexpr float kNone = std::numeric_limits<float>::infinity();
 
 // Renders the points of `src` into `dst`'s grid, nearest depth per pixel.
 void render_depths(const DepthMap& src, const PinholeCamera& dst, ImageF32& out) {
-  for (int y = 0; y < out.height(); ++y) {
-    std::fill(out.row(y), out.row(y) + out.width(), kNone);
-  }
   const Transfer to_dst(src.camera, dst);
   const int w = out.width();
   const int h = out.height();
+  // Depth bits per pixel; positive floats order like their bit patterns.
+  constexpr std::uint32_t kNoneBits = std::bit_cast<std::uint32_t>(kNone);
+  std::vector<std::atomic<std::uint32_t>> cells(static_cast<std::size_t>(w) * static_cast<std::size_t>(h));
+  for (std::atomic<std::uint32_t>& c : cells) {
+    c.store(kNoneBits, std::memory_order_relaxed);
+  }
   parallel_for(0, static_cast<std::size_t>(src.height()), 16, [&](std::size_t begin, std::size_t end) {
     for (auto y = static_cast<int>(begin); y < static_cast<int>(end); ++y) {
       for (int x = 0; x < src.width(); ++x) {
@@ -59,8 +63,8 @@ void render_depths(const DepthMap& src, const PinholeCamera& dst, ImageF32& out)
         if (qx < 0 || qy < 0 || qx >= w || qy >= h) {
           continue;
         }
-        // Positive floats order like their bit patterns.
-        std::atomic_ref<std::uint32_t> cell(*reinterpret_cast<std::uint32_t*>(&out(qx, qy)));
+        std::atomic<std::uint32_t>& cell =
+            cells[static_cast<std::size_t>(qy) * static_cast<std::size_t>(w) + static_cast<std::size_t>(qx)];
         const std::uint32_t bits = std::bit_cast<std::uint32_t>(static_cast<float>(p.z()));
         std::uint32_t old = cell.load(std::memory_order_relaxed);
         while (bits < old && !cell.compare_exchange_weak(old, bits, std::memory_order_relaxed)) {
@@ -68,6 +72,13 @@ void render_depths(const DepthMap& src, const PinholeCamera& dst, ImageF32& out)
       }
     }
   });
+  for (int y = 0; y < h; ++y) {
+    for (int x = 0; x < w; ++x) {
+      out(x, y) = std::bit_cast<float>(
+          cells[static_cast<std::size_t>(y) * static_cast<std::size_t>(w) + static_cast<std::size_t>(x)].load(
+              std::memory_order_relaxed));
+    }
+  }
 }
 
 }  // namespace
