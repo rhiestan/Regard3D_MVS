@@ -4,6 +4,7 @@ add_library(r3d STATIC
   r3d/core/camera_model.cpp
   r3d/core/color_convert.cpp
   r3d/core/log.cpp
+  r3d/core/memory.cpp
   r3d/core/pyramid.cpp
   r3d/core/simd.cpp
   r3d/core/thread_pool.cpp
@@ -15,7 +16,9 @@ add_library(r3d STATIC
   r3d/io/scene_export.cpp
   r3d/io/stb_impl.cpp
   r3d/mvs/consistency.cpp
+  r3d/mvs/visibility.cpp
   r3d/mvs/depth_map.cpp
+  r3d/mvs/depth_map_store.cpp
   r3d/mvs/fusion.cpp
   r3d/mvs/multi_stereo.cpp
   r3d/mvs/refinement.cpp

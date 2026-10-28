@@ -1,6 +1,8 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <filesystem>
+#include <string>
 #include <vector>
 
 #include <Eigen/Geometry>
@@ -9,9 +11,11 @@
 #include "r3d/core/camera_model.hpp"
 #include "r3d/mvs/consistency.hpp"
 #include "r3d/mvs/depth_map.hpp"
+#include "r3d/mvs/depth_map_store.hpp"
 #include "r3d/mvs/fusion.hpp"
 #include "r3d/mvs/multi_stereo.hpp"
 #include "r3d/mvs/refinement.hpp"
+#include "r3d/mvs/visibility.hpp"
 #include "r3d/rectify/rectification.hpp"
 #include "test_util.hpp"
 
@@ -492,5 +496,189 @@ TEST_CASE("Refinement fits slanted planes from stair-stepped depths") {
     r3d::refine_depth_map(map, images[0], wrong_views, opt, &st);
     CHECK(st.refined < st.input / 20);
     CHECK(relative_depth_rms(map, truth, border) < before * 1.2);
+  }
+}
+
+TEST_CASE("remove_depth_speckles removes small segments") {
+  r3d::DepthMap map;
+  map.allocate(20, 20);
+  map.depth.fill(2.0F);
+  for (int y = 2; y < 5; ++y) {
+    for (int x = 2; x < 5; ++x) {
+      map.depth(x, y) = 3.0F;  // separate segment of 9 pixels
+    }
+  }
+  for (int y = 10; y < 14; ++y) {
+    for (int x = 10; x < 14; ++x) {
+      map.depth(x, y) = 2.02F;  // 1% step: part of the large segment
+    }
+  }
+  CHECK(r3d::remove_depth_speckles(map, 10, 0.02) == 9);
+  CHECK_FALSE(map.valid(3, 3));
+  CHECK(map.valid(11, 11));
+  CHECK(map.num_valid() == 400 - 9);
+  CHECK(r3d::remove_depth_speckles(map, 10, 0.02) == 0);
+}
+
+TEST_CASE("Visibility filter removes depths behind surfaces and in free space") {
+  const MultiRig rig;
+  const Plane plane = test_plane(rig.base);
+  std::vector<r3d::DepthMap> maps{plane_depth_map(rig.grid(), plane, 0, 1)};
+  for (std::size_t i = 0; i < rig.partners.size(); ++i) {
+    maps.push_back(plane_depth_map({rig.cam.pinhole(), rig.partners[i]}, plane, static_cast<std::uint32_t>(i + 1), 0));
+  }
+  for (r3d::DepthMap& m : maps) {
+    m.support.fill(3);
+  }
+  // Base view: a patch behind the plane (a reflection) and one in front of it, each confirmed by one view.
+  for (int y = 100; y < 110; ++y) {
+    for (int x = 100; x < 110; ++x) {
+      maps[0].depth(x, y) *= 1.3F;
+      maps[0].depth(x + 60, y) *= 0.7F;
+      maps[0].support(x, y) = 1;
+      maps[0].support(x + 60, y) = 1;
+    }
+  }
+  std::vector<std::vector<std::size_t>> neighbours{{1, 2, 3}, {0, 2, 3}, {0, 1, 3}, {0, 1, 2}};
+  const std::size_t valid = maps[0].num_valid();
+  r3d::VisibilityStats st;
+  r3d::filter_visibility(maps, neighbours, {}, &st);
+  CHECK(st.removed == 200);
+  CHECK(maps[0].num_valid() == valid - 200);
+  CHECK_FALSE(maps[0].valid(105, 105));
+  CHECK_FALSE(maps[0].valid(165, 105));
+  CHECK(maps[0].valid(130, 105));
+  CHECK(st.occluded > 0);
+  CHECK(st.free_space > 0);
+  for (std::size_t i = 1; i < maps.size(); ++i) {
+    CHECK(maps[i].num_valid() == static_cast<std::size_t>(maps[i].width() * maps[i].height()));
+  }
+}
+
+TEST_CASE("Octree fusion: finer views win, fold validation, passes") {
+  const MultiRig rig;
+  const Plane plane = test_plane(rig.base);
+  const Eigen::Vector3d origin(0.1, 0.2, 0.3);
+  SUBCASE("the result does not depend on the number of passes") {
+    const std::vector<r3d::DepthMap> maps{plane_depth_map(rig.grid(), plane, 0, 1),
+                                          plane_depth_map({rig.cam.pinhole(), rig.partners[0]}, plane, 1, 0)};
+    r3d::FusionStats one;
+    const r3d::PointCloud a = r3d::fuse_depth_maps(maps, origin, {}, &one);
+    r3d::FusionOptions small;
+    small.memory_budget = std::size_t{40} * 20000;
+    r3d::FusionStats many;
+    const r3d::PointCloud b = r3d::fuse_depth_maps(maps, origin, small, &many);
+    CHECK(one.passes == 1);
+    CHECK(many.passes > 3);
+    REQUIRE(a.size() == b.size());
+    bool same = true;
+    for (std::size_t i = 0; i < a.size(); ++i) {
+      same = same && a.positions[i] == b.positions[i] && a.normals[i] == b.normals[i];
+    }
+    CHECK(same);
+    CHECK(one.input_points == maps[0].num_valid() + maps[1].num_valid());
+    CHECK(one.levels >= 1);
+  }
+  SUBCASE("points of a view three times farther away are dropped where the near view sees the plane") {
+    r3d::Pose far = rig.base;
+    far.center = rig.base.center - 10.0 * rig.base.view_direction();
+    const std::vector<r3d::DepthMap> maps{plane_depth_map(rig.grid(), plane, 0, 1),
+                                          plane_depth_map({rig.cam.pinhole(), far}, plane, 1, 0)};
+    // The near view covers about a ninth of the far view's footprint.
+    const std::size_t overlap = maps[1].num_valid() / 9;
+    r3d::FusionStats st;
+    const r3d::PointCloud cloud = r3d::fuse_depth_maps(maps, origin, {}, &st);
+    MESSAGE("coarser ", st.coarser_points, " of about ", overlap, ", levels ", st.levels);
+    CHECK(st.coarser_points > overlap * 7 / 10);
+    CHECK(st.coarser_points < overlap * 13 / 10);
+    double worst = 0.0;
+    for (std::size_t i = 0; i < cloud.size(); ++i) {
+      worst = std::max(worst, std::abs((cloud.world_position(i) - plane.point).dot(plane.normal)));
+    }
+    CHECK(worst < 1e-4);
+    r3d::FusionOptions all;
+    all.resolution_ratio = 0.0;
+    CHECK(r3d::fuse_depth_maps(maps, origin, all, &st).size() > cloud.size());
+    CHECK(st.coarser_points == 0);
+  }
+  SUBCASE("fold validation keeps points that two views see") {
+    const r3d::PinholeCamera partner{rig.cam.pinhole(), rig.partners[0]};
+    const std::vector<r3d::DepthMap> maps{plane_depth_map(rig.grid(), plane, 0, 1), plane_depth_map(partner, plane, 1, 0)};
+    r3d::FusionOptions opt;
+    opt.voxel_factor = 2.0;
+    opt.min_sources = 2;
+    opt.fold_neighbourhood = false;
+    r3d::FusionStats st;
+    const r3d::PointCloud cloud = r3d::fuse_depth_maps(maps, origin, opt, &st);
+    CHECK(st.unsupported_points > 0);
+    // With the neighbouring leaves, points next to the other view's footprint are kept as well.
+    opt.fold_neighbourhood = true;
+    r3d::FusionStats wide;
+    CHECK(r3d::fuse_depth_maps(maps, origin, opt, &wide).size() > cloud.size());
+    CHECK(wide.unsupported_points < st.unsupported_points);
+    REQUIRE(cloud.size() > 1000);
+    std::size_t outside = 0;
+    for (std::size_t i = 0; i < cloud.size(); ++i) {
+      for (const r3d::PinholeCamera* cam : {&maps[0].camera, &partner}) {
+        const Eigen::Vector2d q = cam->project(cloud.world_position(i));
+        outside += (q.x() < -2.0 || q.y() < -2.0 || q.x() > cam->intrinsics.width + 1.0 ||
+                    q.y() > cam->intrinsics.height + 1.0)
+                       ? 1
+                       : 0;
+      }
+    }
+    CHECK(outside == 0);
+  }
+}
+
+TEST_CASE("DepthMapStore keeps maps within the memory budget") {
+  const MultiRig rig;
+  const Plane plane = test_plane(rig.base);
+  const r3d::test::TempDir dir;
+  auto path = [&](std::size_t i) { return dir.path() / ("m" + std::to_string(i) + ".r3dd"); };
+  auto make = [&](std::size_t i) {
+    r3d::DepthMap m = plane_depth_map(rig.grid(), plane, static_cast<std::uint32_t>(i), 0);
+    m.depth(10, 10) = static_cast<float>(i + 1);
+    return m;
+  };
+  const std::size_t map_bytes = r3d::depth_map_bytes(make(0));
+  SUBCASE("spilled maps come back from their files, which are removed with the store") {
+    {
+      r3d::DepthMapStore store(5, path, map_bytes * 5 / 2, false);
+      for (std::size_t i = 0; i < 5; ++i) {
+        store.put(i, make(i));
+        CHECK(store.resident_bytes() <= map_bytes * 5 / 2);
+      }
+      CHECK(std::filesystem::exists(path(0)));     // evicted
+      CHECK_FALSE(std::filesystem::exists(path(4)));  // still in memory
+      for (std::size_t i = 0; i < 5; ++i) {
+        const auto m = store.get(i);
+        CHECK(m->view == i);
+        CHECK(m->depth(10, 10) == static_cast<float>(i + 1));
+        CHECK(store.resident_bytes() <= map_bytes * 5 / 2);
+      }
+      CHECK(store.contains(3));
+    }
+    for (std::size_t i = 0; i < 5; ++i) {
+      CHECK_FALSE(std::filesystem::exists(path(i)));
+    }
+  }
+  SUBCASE("persistent stores write every map and can adopt existing files") {
+    {
+      r3d::DepthMapStore store(3, path, std::size_t{1} << 30, true);
+      for (std::size_t i = 0; i < 3; ++i) {
+        store.put(i, make(i));
+      }
+      store.put(1, r3d::DepthMap{});  // a view without depths
+      CHECK(store.get(1)->width() == 0);
+    }
+    CHECK(std::filesystem::exists(path(0)));
+    CHECK(std::filesystem::exists(path(2)));
+    r3d::DepthMapStore again(3, path, 0, true);
+    CHECK_FALSE(again.contains(2));
+    CHECK(again.get(2)->width() == 0);
+    again.adopt_file(2);
+    CHECK(again.contains(2));
+    CHECK(again.get(2)->depth(10, 10) == 3.0F);
   }
 }

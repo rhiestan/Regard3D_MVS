@@ -5,7 +5,7 @@ Multi-view stereo densification for [OpenMVG](https://github.com/openMVG/openMVG
 scale-annotated point cloud, which is meant to be meshed and textured with external tools (PoissonRecon,
 FSSR, texrecon).
 
-Status: **Phase 5** (depth refinement). Done so far:
+Status: **Phase 6** (octree fusion and filtering). Done so far:
 
 - Phase 1: OpenMVG `sfm_data.json` / `.bin` and COLMAP text import, OpenMVG camera models, undistortion,
   image pyramids, stereo pair selection, PLY exports for visual checks.
@@ -22,6 +22,11 @@ Status: **Phase 5** (depth refinement). Done so far:
 - Phase 5: patch-based refinement of every depth as a plane (depth and orientation) by Gauss-Newton on
   the normalised cross-correlation with the neighbouring images, per-pixel view selection, NCC
   confidence. ETH3D F1 at 2 cm: courtyard 0.81, office 0.64, pipes 0.61, terrains 0.82.
+- Phase 6: visibility filter against the neighbouring views, octree fusion with leaves of one GSD
+  (best resolution wins, optional fold validation `--min-sources 2`, density `--voxel-factor`), and a
+  pipeline within a memory budget (`--memory`, `--fusion-memory`; depth maps that do not fit wait in the
+  work directory). ETH3D F1 at 2 cm: courtyard 0.80, office 0.64, pipes 0.62, terrains 0.82 (0.85 with
+  `--min-sources 2`).
 
 Design and IP decisions are logged in [docs/DECISIONS.md](docs/DECISIONS.md).
 
@@ -34,8 +39,12 @@ r3dmvs scene path/to/sfm_data.bin --pairs --sparse-ply sparse.ply --colors --cam
 # coloured point cloud per pair:
 r3dmvs pair path/to/sfm_data.bin --all --out-dir pairs
 
-# Dense point cloud (depth maps are cached in the work directory; --reuse skips matching):
+# Dense point cloud (depth maps are cached in the work directory; --reuse skips matching,
+# --reuse-refined also the refinement):
 r3dmvs dense path/to/sfm_data.bin --resolution 0.5 --work-dir work -o dense.ply
+# Sparser and cleaner: leaves of two GSD, points seen by two views:
+r3dmvs dense path/to/sfm_data.bin --resolution 0.5 --work-dir work --reuse-refined --voxel-factor 2 \
+       --min-sources 2 -o dense_clean.ply
 
 # Match a rectified pair, or score the Middlebury 2014 training set (MiddEval3 layout):
 r3dmvs stereo path/to/MiddEval3/trainingH
