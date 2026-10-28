@@ -426,17 +426,27 @@ double relative_depth_rms(const r3d::DepthMap& map, const r3d::DepthMap& truth, 
 TEST_CASE("Refinement fits slanted planes from stair-stepped depths") {
   const MultiRig rig;
   Plane plane;
-  const r3d::PinholeCamera cam0 = rig.grid();
+  // The base view is the central 160 x 120 crop of the rig's grid, which
+  // keeps the test fast in sanitizer builds.
+  r3d::PinholeCamera cam0 = rig.grid();
+  cam0.intrinsics.width = 160;
+  cam0.intrinsics.height = 120;
+  cam0.intrinsics.cx -= 80.0;
+  cam0.intrinsics.cy -= 60.0;
   plane.normal = (rig.base.view_direction() + rig.base.rotation.transpose() * Eigen::Vector3d(0.8, 0.4, 0.0))
                      .normalized();  // 42 degrees
   plane.point = rig.base.center + 5.0 * rig.base.view_direction();
   const r3d::DepthMap truth = plane_depth_map(cam0, plane, 0, 1);
-  std::vector<r3d::RefinementImage> images;
-  images.push_back(r3d::make_refinement_image(cam0, render_plane(cam0, plane, 0.0)));
-  for (const r3d::Pose& p : rig.partners) {
-    const r3d::PinholeCamera cam{rig.cam.pinhole(), p};
-    images.push_back(r3d::make_refinement_image(cam, render_plane(cam, plane, 0.0)));
-  }
+  // Rendered once: doctest runs this setup again for every subcase.
+  static const std::vector<r3d::RefinementImage> images = [&] {
+    std::vector<r3d::RefinementImage> result;
+    result.push_back(r3d::make_refinement_image(cam0, render_plane(cam0, plane, 0.0)));
+    for (const r3d::Pose& p : rig.partners) {
+      const r3d::PinholeCamera cam{rig.cam.pinhole(), p};
+      result.push_back(r3d::make_refinement_image(cam, render_plane(cam, plane, 0.0)));
+    }
+    return result;
+  }();
   const std::vector<const r3d::RefinementImage*> views{&images[1], &images[2], &images[3]};
 
   // SGM-like input: constant depth per 4x4 block (fronto-parallel steps) plus a
@@ -467,7 +477,7 @@ TEST_CASE("Refinement fits slanted planes from stair-stepped depths") {
     CHECK(st.input == static_cast<std::size_t>(map.width() * map.height()));
     CHECK(st.refined > st.input * 8 / 10);
     CHECK(after < before / 5.0);
-    CHECK(map.confidence(160, 120) > 0.9F);
+    CHECK(map.confidence(80, 60) > 0.9F);
   }
   SUBCASE("unrelated images keep the input") {
     std::vector<r3d::RefinementImage> wrong;
