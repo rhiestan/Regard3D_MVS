@@ -361,6 +361,8 @@ int main(int argc, char** argv) {
 
   SceneArgs dense_scene;
   r3dmvs::DenseArgs dense_args;
+  dense_args.options = r3d::dense_preset(r3dmvs::preset_from_args(argc, argv));
+  dense_args.preset = r3d::to_string(r3dmvs::preset_from_args(argc, argv));
   CLI::App* dense = app.add_subcommand("dense", "Compute the dense point cloud of a scene");
   dense->add_option("input", dense_scene.input, "sfm_data.json, sfm_data.bin or a COLMAP model directory")->required();
   dense->add_option("--image-dir", dense_scene.image_dir, "Directory with the images (default: from the scene)");
@@ -396,6 +398,7 @@ int main(int argc, char** argv) {
     } else if (pair->parsed()) {
       run_pair(pair_args);
     } else if (dense->parsed()) {
+      r3dmvs::install_cancel_handlers();
       r3dmvs::run_dense(dense_args, read_scene(dense_scene));
     } else if (export_cmd->parsed()) {
       if (export_scene.input.empty()) {
@@ -405,6 +408,9 @@ int main(int argc, char** argv) {
         r3dmvs::run_export(export_args, &loaded);
       }
     }
+  } catch (const r3d::Cancelled&) {
+    r3d::log_error("cancelled");
+    return 130;
   } catch (const std::exception& e) {
     r3d::log_error("{}", e.what());
     return 1;

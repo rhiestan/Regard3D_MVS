@@ -32,36 +32,10 @@ void add_layout_options(CLI::App& command, LayoutArgs& args) {
       ->capture_default_str();
 }
 
-namespace {
-
-r3d::PlyWriteOptions ply_options(const LayoutArgs& args, const std::string& comment, bool double_positions) {
-  r3d::PlyWriteOptions ply;
-  ply.double_positions = double_positions;
-  ply.comments.push_back(comment);
-  if (args.layout != "full") {
-    ply.comments.push_back("r3dmvs layout " + args.layout);
-  }
-  return ply;
-}
-
 r3d::CloudLayoutOptions layout_options(const LayoutArgs& args) {
   r3d::CloudLayoutOptions options = args.options;
   options.layout = r3d::parse_cloud_layout(args.layout).value_or(r3d::CloudLayout::full);
   return options;
-}
-
-}  // namespace
-
-CloudWriter::CloudWriter(const std::string& path, const LayoutArgs& args, const std::string& comment,
-                         bool double_positions)
-    : options_(layout_options(args)), writer_(utf8_path(path), ply_options(args, comment, double_positions)) {}
-
-void CloudWriter::append(const r3d::PointCloud& part) {
-  if (options_.layout == r3d::CloudLayout::full) {
-    writer_.append(part);
-  } else {
-    writer_.append(r3d::cloud_for_mesher(part, options_));
-  }
 }
 
 void add_export_options(CLI::App& command, ExportArgs& args) {
@@ -85,7 +59,10 @@ void run_export(const ExportArgs& args, const r3d::Scene* scene) {
   if (!args.cloud.empty()) {
     const r3d::Stopwatch watch;
     const r3d::PointCloud cloud = r3d::read_ply(utf8_path(args.cloud));
-    CloudWriter writer(args.output, args.layout, "r3dmvs dense cloud", !cloud.origin.isZero());
+    r3d::PlyWriteOptions ply;
+    ply.double_positions = !cloud.origin.isZero();
+    ply.comments.push_back("r3dmvs dense cloud");
+    r3d::CloudWriter writer(utf8_path(args.output), layout_options(args.layout), ply);
     writer.append(cloud);
     writer.close();
     std::printf("wrote %zu points (%s) to %s in %.2f s\n", cloud.size(), args.layout.layout.c_str(),

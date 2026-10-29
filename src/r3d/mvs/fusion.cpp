@@ -131,14 +131,16 @@ std::uint64_t chunk_order(std::uint64_t chunk) {
   return morton((chunk >> (2 * kChunkBits)) & mask, (chunk >> kChunkBits) & mask, chunk & mask);
 }
 
-// Visits the rows of every map in parallel: body(map, map index, first row, end row).
-template <typename Body>
-void for_each_point(std::size_t count, const DepthMapSource& source, Body&& body) {
+// Visits the rows of every map in parallel: body(map, map index, first row, end row);
+// done() after each map.
+template <typename Body, typename Done>
+void for_each_point(std::size_t count, const DepthMapSource& source, Body&& body, Done&& done) {
   for (std::size_t mi = 0; mi < count; ++mi) {
     const std::shared_ptr<const DepthMap> m = source(mi);
     parallel_for(0, static_cast<std::size_t>(m->height()), 16, [&](std::size_t begin, std::size_t end) {
       body(*m, mi, static_cast<int>(begin), static_cast<int>(end));
     });
+    done();
   }
 }
 
@@ -377,8 +379,16 @@ PointCloud fuse_depth_maps(std::size_t count, const DepthMapSource& source, std:
 
 void fuse_depth_maps(std::size_t count, const DepthMapSource& source, std::vector<float> gsd,
                      const Eigen::Vector3d& origin, const FusionOptions& options, const PointSink& sink,
-                     FusionStats* stats) {
+                     FusionStats* stats, const FusionProgress& progress) {
   FusionStats st;
+  std::size_t maps_read = 0;
+  std::size_t maps_total = 2 * count;  // one batch until pass 1 has counted the points
+  auto map_read = [&]() {
+    ++maps_read;
+    if (progress) {
+      progress(maps_read, maps_total);
+    }
+  };
   auto finish = [&]() {
     if (stats != nullptr) {
       *stats = st;
@@ -435,7 +445,7 @@ void fuse_depth_maps(std::size_t count, const DepthMapSource& source, std::vecto
     for (const auto& [chunk, c] : local) {
       counts[chunk] += c;
     }
-  });
+  }, map_read);
   st.outside_points = outside.load();
 
   // Chunks in spatial order, grouped into batches within the memory budget.
@@ -465,6 +475,7 @@ void fuse_depth_maps(std::size_t count, const DepthMapSource& source, std::vecto
   }
   st.chunks = chunks.size();
   st.passes = static_cast<int>(batch_size.size());
+  maps_total = count * (1 + batch_size.size());
 
   std::vector<Eigen::Vector3d> centres(count);
   std::vector<Entry> buffer;
@@ -518,7 +529,7 @@ void fuse_depth_maps(std::size_t count, const DepthMapSource& source, std::vecto
           e.level = static_cast<std::uint8_t>(grid.level(e.gsd));
         }
       }
-    });
+    }, map_read);
     // Fusion per chunk, appended in chunk order.
     std::vector<Output> outputs(end_chunk - first_chunk);
     parallel_for(first_chunk, end_chunk, 1, [&](std::size_t begin, std::size_t end) {

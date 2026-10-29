@@ -217,3 +217,30 @@ TEST_CASE("pyramid_camera scales K by 2^-level") {
   R3D_CHECK_NEAR(p2.x(), p0.x() / 4, 1e-12);
   R3D_CHECK_NEAR(p2.y(), p0.y() / 4, 1e-12);
 }
+
+TEST_CASE("The disparity range limit does not depend on the resolution") {
+  const StereoRig r = rig(CameraModel::pinhole);
+  int accepted = 0;
+  int rejected = 0;
+  for (const double near : {0.15, 0.2, 0.3, 0.5, 1.0, 2.0}) {
+    CAPTURE(near);
+    r3d::RectificationOptions options;
+    options.max_disparity_ratio = 1.0;
+    const r3d::RectifiedPair full =
+        r3d::compute_rectification(r.left_cam, r.left_pose, r.right_cam, r.right_pose, r3d::DepthRange{near, 10.0}, options);
+    const double ratio = static_cast<double>(full.num_disparities) /
+                         std::max(full.left.intrinsics.width, full.right.intrinsics.width);
+    if (std::abs(ratio - options.max_disparity_ratio) < 0.1 || full.num_disparities == 0) {
+      continue;  // label rounding decides near the limit
+    }
+    (full.valid ? accepted : rejected) += 1;
+    for (const double resolution : {0.25, 4.0}) {
+      options.resolution = resolution;
+      CHECK(r3d::compute_rectification(r.left_cam, r.left_pose, r.right_cam, r.right_pose, r3d::DepthRange{near, 10.0},
+                                       options)
+                .valid == full.valid);
+    }
+  }
+  CHECK(accepted > 0);
+  CHECK(rejected > 0);
+}

@@ -18,6 +18,10 @@ namespace r3d {
 // writes only to its own chunk therefore gives identical results with any
 // number of threads.
 //
+// Cancellation: before every chunk, parallel_for polls the cancellation
+// token of the calling thread (see cancel.hpp) and stops with Cancelled once
+// it is requested; bodies run with the caller's token.
+//
 // Nesting: parallel_for called from inside a parallel_for body runs serially
 // on the calling thread. This avoids deadlock and oversubscription; outer
 // loops should carry the parallelism.

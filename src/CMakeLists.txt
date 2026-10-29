@@ -2,6 +2,7 @@ configure_file(r3d/version.hpp.in "${CMAKE_CURRENT_BINARY_DIR}/generated/r3d/ver
 
 add_library(r3d STATIC
   r3d/core/camera_model.cpp
+  r3d/core/cancel.cpp
   r3d/core/color_convert.cpp
   r3d/core/log.cpp
   r3d/core/memory.cpp
@@ -23,6 +24,7 @@ add_library(r3d STATIC
   r3d/mvs/fusion.cpp
   r3d/mvs/multi_stereo.cpp
   r3d/mvs/refinement.cpp
+  r3d/pipeline/dense.cpp
   r3d/rectify/rectification.cpp
   r3d/scene/scene.cpp
   r3d/scene/undistort.cpp
@@ -39,12 +41,12 @@ target_include_directories(r3d PUBLIC
   "${CMAKE_CURRENT_SOURCE_DIR}"
   "${CMAKE_CURRENT_BINARY_DIR}/generated")
 
+# Eigen is part of the public headers; a parent project that defines the
+# Eigen3::Eigen target first (e.g. the Eigen its other libraries use) is
+# compiled against the same copy. Highway is used in the sources only.
 target_link_libraries(r3d
-  PUBLIC Eigen3::Eigen hwy::hwy
-  PRIVATE r3d_stb_headers nlohmann_json::nlohmann_json)
-
-# Eigen: refuse any non-MPL2 (LGPL) code paths at compile time.
-target_compile_definitions(r3d PUBLIC EIGEN_MPL2_ONLY)
+  PUBLIC Eigen3::Eigen
+  PRIVATE hwy::hwy r3d_stb_headers nlohmann_json::nlohmann_json)
 
 find_package(Threads REQUIRED)
 target_link_libraries(r3d PUBLIC Threads::Threads)

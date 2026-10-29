@@ -278,8 +278,10 @@ RectifiedPair compute_rectification(const CameraIntrinsics& cam_left, const Pose
   const int dmax_index = static_cast<int>(std::ceil(dmax + offset));
   const int align = std::max(1, options.disparity_align);
   pair.num_disparities = (dmax_index - pair.disparity_min + 1 + align - 1) / align * align;
-  if (pair.num_disparities > options.max_disparities) {
-    pair.reason = std::format("disparity range too large ({} labels)", pair.num_disparities);
+  const int max_labels =
+      static_cast<int>(options.max_disparity_ratio * static_cast<double>(std::max(left.width, right.width)));
+  if (pair.num_disparities > max_labels) {
+    pair.reason = std::format("disparity range too large ({} labels, at most {})", pair.num_disparities, max_labels);
     return pair;
   }
   pair.valid = true;

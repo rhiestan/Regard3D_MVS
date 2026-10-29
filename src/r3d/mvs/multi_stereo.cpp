@@ -222,15 +222,25 @@ PinholeCamera depth_map_camera(const Scene& scene, std::size_t view, double reso
   return cam;
 }
 
+double depth_map_resolution(const Scene& scene, std::size_t view, const DepthMapOptions& options) {
+  if (options.max_image_size <= 0) {
+    return options.resolution;
+  }
+  const PinholeIntrinsics cam = undistorted_camera(scene.camera_of(view));
+  const int longer = std::max(cam.width, cam.height);
+  return std::min(options.resolution, static_cast<double>(options.max_image_size) / std::max(longer, 1));
+}
+
 DepthMap compute_depth_map(const Scene& scene, const ViewSelection& selection, std::size_t view,
                            const DepthMapOptions& options, DepthMapStats* stats) {
   DepthMapStats local;
   DepthMapStats& st = stats != nullptr ? *stats : local;
   st = DepthMapStats{};
   const SceneView& vb = scene.views[view];
-  const PinholeCamera grid = depth_map_camera(scene, view, options.resolution);
+  const double resolution = depth_map_resolution(scene, view, options);
+  const PinholeCamera grid = depth_map_camera(scene, view, resolution);
   RectificationOptions rect_options = options.rectification;
-  rect_options.resolution = options.resolution;
+  rect_options.resolution = resolution;
 
   Stopwatch watch;
   const ImageU16 base_gray = read_image_u16(vb.image_path, 1);

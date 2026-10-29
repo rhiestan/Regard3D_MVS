@@ -7,6 +7,7 @@
 
 #include <doctest/doctest.h>
 
+#include "r3d/core/cancel.hpp"
 #include "r3d/core/thread_pool.hpp"
 
 using r3d::ThreadPool;
@@ -100,4 +101,45 @@ TEST_CASE("default pool can be resized") {
   CHECK(count.load() == 10);
   r3d::set_default_thread_count(0);
   CHECK(r3d::default_thread_pool().num_threads() >= 1);
+}
+
+TEST_CASE("parallel_for stops with Cancelled once the caller's token is requested") {
+  for (const unsigned threads : {1u, 4u}) {
+    CAPTURE(threads);
+    ThreadPool pool(threads);
+    r3d::CancellationToken token;
+    std::atomic<int> executed{0};
+    {
+      const r3d::CancellationScope scope(&token);
+      CHECK(r3d::current_cancellation() == &token);
+      CHECK_THROWS_AS(pool.parallel_for(0, 1000, 1,
+                                        [&](std::size_t b, std::size_t) {
+                                          executed.fetch_add(1);
+                                          if (b == 10) {
+                                            token.request();
+                                          }
+                                        }),
+                      r3d::Cancelled);
+      CHECK(executed.load() < 1000);
+
+      // Nested loops in the bodies see the token as well.
+      token.reset();
+      std::atomic<int> inner{0};
+      CHECK_THROWS_AS(pool.parallel_for(0, 8, 1,
+                                        [&](std::size_t, std::size_t) {
+                                          pool.parallel_for(0, 100, 1, [&](std::size_t, std::size_t) {
+                                            if (inner.fetch_add(1) == 5) {
+                                              token.request();
+                                            }
+                                          });
+                                        }),
+                      r3d::Cancelled);
+      CHECK(inner.load() < 800);
+    }
+    CHECK(r3d::current_cancellation() == nullptr);
+    // Without a scope the requested token has no effect.
+    std::atomic<int> after{0};
+    pool.parallel_for(0, 100, 1, [&](std::size_t, std::size_t) { after.fetch_add(1); });
+    CHECK(after.load() == 100);
+  }
 }

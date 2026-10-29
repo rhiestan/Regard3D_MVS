@@ -5,7 +5,7 @@ Multi-view stereo densification for [OpenMVG](https://github.com/openMVG/openMVG
 scale-annotated point cloud, which is meant to be meshed and textured with external tools (PoissonRecon,
 FSSR, texrecon).
 
-Status: **Phase 7** (export for external meshing and texturing tools). Done so far:
+Status: **Phase 8** (library API and Regard3D integration). Done so far:
 
 - Phase 1: OpenMVG `sfm_data.json` / `.bin` and COLMAP text import, OpenMVG camera models, undistortion,
   image pyramids, stereo pair selection, PLY exports for visual checks.
@@ -32,8 +32,12 @@ Status: **Phase 7** (export for external meshing and texturing tools). Done so f
   texrecon). Mesh F1 at 2 cm with Poisson: courtyard 0.78, office 0.63, pipes 0.57, terrains 0.81, as good
   as or better than OpenMVS's full pipeline on the same poses (0.78, 0.43, 0.55, 0.70), so there is no
   built-in mesher (D43).
+- Phase 8: the pipeline as a library function (`r3d::densify`) with progress callbacks and
+  cancellation, presets `fast` / `normal` / `high` / `ultra`, and machine-readable progress and clean
+  cancellation (Ctrl+C, SIGTERM, Ctrl+Break) for programs that run `r3dmvs` as a child process.
 
-Design and IP decisions are logged in [docs/DECISIONS.md](docs/DECISIONS.md).
+Design and IP decisions are logged in [docs/DECISIONS.md](docs/DECISIONS.md). Using R3DMVS from another
+program, as a library or as a child process: [docs/API.md](docs/API.md).
 
 ```sh
 # Summary, stereo pairs, sparse cloud, camera frustums and undistorted images of a scene:
@@ -44,18 +48,19 @@ r3dmvs scene path/to/sfm_data.bin --pairs --sparse-ply sparse.ply --colors --cam
 # coloured point cloud per pair:
 r3dmvs pair path/to/sfm_data.bin --all --out-dir pairs
 
-# Dense point cloud (depth maps are cached in the work directory; --reuse skips matching,
-# --reuse-refined also the refinement):
-r3dmvs dense path/to/sfm_data.bin --resolution 0.5 --work-dir work -o dense.ply
+# Dense point cloud with a preset (fast, normal (default), high, ultra); options given as well
+# override it. Depth maps are cached in the work directory; --reuse skips matching, --reuse-refined
+# also the refinement. --progress prints "progress <percent> <stage> <done>/<total>" lines:
+r3dmvs dense path/to/sfm_data.bin --preset normal --work-dir work --progress -o dense.ply
 # Sparser and cleaner: leaves of two GSD, points seen by two views:
-r3dmvs dense path/to/sfm_data.bin --resolution 0.5 --work-dir work --reuse-refined --voxel-factor 2 \
-       --min-sources 2 -o dense_clean.ply
+r3dmvs dense path/to/sfm_data.bin --work-dir work --reuse-refined --voxel-factor 2 --min-sources 2 \
+       -o dense_clean.ply
 
 # Point attributes for a mesher (--for poisson / fssr, also on 'dense'), and the scene for texrecon:
 r3dmvs export --cloud dense.ply --for poisson -o poisson_in.ply
 r3dmvs export path/to/sfm_data.bin --texrecon-dir texrecon
 # Mesh and texture end to end (PoissonRecon or FSSR, then texrecon), see tools/README.md:
-python tools/r3d_mesh.py path/to/sfm_data.bin --out-dir mesh --tools path/to/external_tools -- --resolution 0.5
+python tools/r3d_mesh.py path/to/sfm_data.bin --out-dir mesh --tools path/to/external_tools -- --voxel-factor 2
 
 # Match a rectified pair, or score the Middlebury 2014 training set (MiddEval3 layout):
 r3dmvs stereo path/to/MiddEval3/trainingH

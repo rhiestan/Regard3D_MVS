@@ -10,6 +10,7 @@ add_executable(r3d_tests
   test_mesher_export.cpp
   test_mvs.cpp
   test_openmvg_scene.cpp
+  test_pipeline.cpp
   test_ply.cpp
   test_pyramid.cpp
   test_rectification.cpp

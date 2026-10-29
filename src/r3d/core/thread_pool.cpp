@@ -5,6 +5,8 @@
 #include <exception>
 #include <memory>
 
+#include "r3d/core/cancel.hpp"
+
 namespace r3d {
 namespace {
 
@@ -26,6 +28,7 @@ struct Job {
   std::size_t grain = 1;
   std::size_t num_chunks = 0;
   const std::function<void(std::size_t, std::size_t)>* body = nullptr;
+  const CancellationToken* cancel = nullptr;  // of the calling thread
 
   std::atomic<std::size_t> next_chunk{0};
   std::atomic<std::size_t> finished_chunks{0};
@@ -37,6 +40,7 @@ struct Job {
 
   void execute() {
     const DepthGuard depth;
+    const CancellationScope scope(cancel);
     for (;;) {
       const std::size_t chunk = next_chunk.fetch_add(1, std::memory_order_relaxed);
       if (chunk >= num_chunks) {
@@ -46,6 +50,9 @@ struct Job {
         const std::size_t chunk_begin = begin + chunk * grain;
         const std::size_t chunk_end = std::min(end, chunk_begin + grain);
         try {
+          if (cancel != nullptr) {
+            cancel->throw_if_requested();
+          }
           (*body)(chunk_begin, chunk_end);
         } catch (...) {
           const std::lock_guard lock(mutex);
@@ -104,6 +111,7 @@ void ThreadPool::run(std::size_t begin, std::size_t end, std::size_t grain,
   if (num_chunks == 1 || workers_.empty() || in_parallel_region()) {
     const DepthGuard depth;
     for (std::size_t chunk_begin = begin; chunk_begin < end; chunk_begin += grain) {
+      throw_if_cancelled();
       body(chunk_begin, std::min(end, chunk_begin + grain));
     }
     return;
@@ -115,6 +123,7 @@ void ThreadPool::run(std::size_t begin, std::size_t end, std::size_t grain,
   job->grain = grain;
   job->num_chunks = num_chunks;
   job->body = &body;
+  job->cancel = current_cancellation();
 
   const std::size_t helpers = std::min<std::size_t>(workers_.size(), num_chunks - 1);
   for (std::size_t i = 0; i < helpers; ++i) {

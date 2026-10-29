@@ -50,6 +50,7 @@ struct PairDisparity {
 
 struct DepthMapOptions {
   double resolution = 1.0;      // depth map and rectified images, relative to the view's undistorted camera
+  int max_image_size = 0;       // > 0: the depth map's longer side is at most this (pixels), see depth_map_resolution
   int max_pairs = 4;            // stereo partners used per view (best first)
   StereoOptions stereo;
   RectificationOptions rectification;  // resolution is taken from `resolution`
@@ -72,5 +73,9 @@ struct DepthMapStats {
 
 // Undistorted camera of a view scaled by `resolution`, with the view's pose.
 [[nodiscard]] PinholeCamera depth_map_camera(const Scene& scene, std::size_t view, double resolution);
+
+// Resolution of a view's depth map: options.resolution, reduced so that the
+// longer side of the undistorted image stays within options.max_image_size.
+[[nodiscard]] double depth_map_resolution(const Scene& scene, std::size_t view, const DepthMapOptions& options);
 
 }  // namespace r3d

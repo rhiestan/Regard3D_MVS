@@ -71,10 +71,14 @@ using DepthMapSource = std::function<std::shared_ptr<const DepthMap>(std::size_t
 
 // The same with the fused points handed to `sink` in parts (one per batch of
 // chunks, in the same order as above) instead of being collected.
+// `progress(done, total)` is called on the calling thread after every map
+// read; `total` (maps to read over all passes) is exact once the number of
+// passes is known, after the first pass.
 using PointSink = std::function<void(PointCloud&&)>;
+using FusionProgress = std::function<void(std::size_t done, std::size_t total)>;
 void fuse_depth_maps(std::size_t count, const DepthMapSource& source, std::vector<float> gsd,
                      const Eigen::Vector3d& origin, const FusionOptions& options, const PointSink& sink,
-                     FusionStats* stats = nullptr);
+                     FusionStats* stats = nullptr, const FusionProgress& progress = {});
 
 // Appends the GSD of every 4th pixel in both directions.
 void sample_gsd(const DepthMap& map, std::vector<float>& out);

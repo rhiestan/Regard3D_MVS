@@ -10,6 +10,9 @@ if(R3D_SANITIZERS)
 endif()
 
 function(r3d_set_target_options target)
+  # Eigen: refuse any non-MPL2 (LGPL) code paths at compile time. Private, so
+  # that projects embedding the library keep their own choice.
+  target_compile_definitions(${target} PRIVATE EIGEN_MPL2_ONLY)
   if(MSVC)
     # Covers both cl.exe and clang-cl.
     target_compile_options(${target} PRIVATE /W4 /permissive- /utf-8 /Zc:__cplusplus)

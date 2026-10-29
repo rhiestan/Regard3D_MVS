@@ -45,6 +45,37 @@ std::optional<CloudLayout> parse_cloud_layout(std::string_view name) {
   return std::nullopt;
 }
 
+std::string_view to_string(CloudLayout layout) {
+  switch (layout) {
+    case CloudLayout::full: return "full";
+    case CloudLayout::poisson: return "poisson";
+    case CloudLayout::fssr: return "fssr";
+  }
+  return "unknown";
+}
+
+namespace {
+
+PlyWriteOptions with_layout_comment(PlyWriteOptions ply, CloudLayout layout) {
+  if (layout != CloudLayout::full) {
+    ply.comments.push_back(std::format("r3dmvs layout {}", to_string(layout)));
+  }
+  return ply;
+}
+
+}  // namespace
+
+CloudWriter::CloudWriter(const std::filesystem::path& path, const CloudLayoutOptions& layout, PlyWriteOptions ply)
+    : layout_(layout), writer_(path, with_layout_comment(std::move(ply), layout.layout)) {}
+
+void CloudWriter::append(const PointCloud& part) {
+  if (layout_.layout == CloudLayout::full) {
+    writer_.append(part);
+  } else {
+    writer_.append(cloud_for_mesher(part, layout_));
+  }
+}
+
 PointCloud cloud_for_mesher(const PointCloud& cloud, const CloudLayoutOptions& options) {
   cloud.validate();
   if (options.layout == CloudLayout::full) {

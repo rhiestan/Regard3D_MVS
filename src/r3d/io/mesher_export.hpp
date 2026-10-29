@@ -7,6 +7,7 @@
 
 #include "r3d/core/camera.hpp"
 #include "r3d/core/point_cloud.hpp"
+#include "r3d/io/ply.hpp"
 #include "r3d/scene/scene.hpp"
 
 namespace r3d {
@@ -19,6 +20,7 @@ enum class CloudLayout {
 };
 
 [[nodiscard]] std::optional<CloudLayout> parse_cloud_layout(std::string_view name);
+[[nodiscard]] std::string_view to_string(CloudLayout layout);
 
 struct CloudLayoutOptions {
   CloudLayout layout = CloudLayout::full;
@@ -35,6 +37,20 @@ struct CloudLayoutOptions {
 // The cloud with the attributes of `options.layout`. Throws if the layout
 // needs an attribute the cloud lacks (normals; "value" for fssr).
 [[nodiscard]] PointCloud cloud_for_mesher(const PointCloud& cloud, const CloudLayoutOptions& options);
+
+// Writes a cloud in the layout of `layout`, part by part (see PlyWriter);
+// adds an "r3dmvs layout <name>" comment for layouts other than full.
+class CloudWriter {
+ public:
+  CloudWriter(const std::filesystem::path& path, const CloudLayoutOptions& layout, PlyWriteOptions ply = {});
+  void append(const PointCloud& part);
+  void close() { writer_.close(); }
+  [[nodiscard]] std::size_t size() const noexcept { return writer_.size(); }
+
+ private:
+  CloudLayoutOptions layout_;
+  PlyWriter writer_;
+};
 
 // texrecon (mvs-texturing) camera file: "tx ty tz R00 .. R22" and
 // "f d0 d1 paspect ppx ppy", f normalised by the larger image side, the

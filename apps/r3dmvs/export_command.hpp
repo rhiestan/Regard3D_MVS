@@ -19,20 +19,7 @@ struct LayoutArgs {
 };
 
 void add_layout_options(CLI::App& command, LayoutArgs& args);
-
-// Writes clouds in the layout of `args`, part by part; positions as world
-// coordinates in double when the origin is not zero (georeferenced scenes).
-class CloudWriter {
- public:
-  CloudWriter(const std::string& path, const LayoutArgs& args, const std::string& comment, bool double_positions);
-  void append(const r3d::PointCloud& part);
-  void close() { writer_.close(); }
-  [[nodiscard]] std::size_t size() const noexcept { return writer_.size(); }
-
- private:
-  r3d::CloudLayoutOptions options_;
-  r3d::PlyWriter writer_;
-};
+[[nodiscard]] r3d::CloudLayoutOptions layout_options(const LayoutArgs& args);
 
 // `export`: an existing cloud in another layout, and / or the texrecon scene folder.
 struct ExportArgs {

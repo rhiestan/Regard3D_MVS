@@ -26,7 +26,11 @@ struct RectificationOptions {
   double resolution = 1.0;      // rectified focal length relative to the left camera
   double max_growth = 1.5;      // crop per side, relative to half the larger source dimension
   double min_coverage = 0.4;    // minimum fraction of each source image inside its rectified image
-  int max_disparities = 4096;   // larger label ranges are rejected
+  // Label ranges larger than this times the wider rectified image are rejected
+  // (relative, so that the same pairs are kept at every resolution). Only a
+  // guard against degenerate depth ranges: the hierarchical matcher narrows
+  // wide ranges per pixel, and even pairs of 79x the width added points on ETH3D.
+  double max_disparity_ratio = 100.0;
   int disparity_align = 16;     // the label count is rounded up to a multiple of this
 };
 
