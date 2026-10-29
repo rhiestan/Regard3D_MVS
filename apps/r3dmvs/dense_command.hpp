@@ -4,6 +4,7 @@
 
 #include <CLI/CLI.hpp>
 
+#include "export_command.hpp"
 #include "r3d/mvs/consistency.hpp"
 #include "r3d/mvs/fusion.hpp"
 #include "r3d/mvs/multi_stereo.hpp"
@@ -30,6 +31,7 @@ struct DenseArgs {
   r3d::FusionOptions fusion;
   std::size_t fusion_memory_mb = 2048;
   std::size_t memory_mb = 8192;     // depth maps and refinement images in memory
+  LayoutArgs layout;                // point attributes of the output
 };
 
 void add_dense_options(CLI::App& command, DenseArgs& args);

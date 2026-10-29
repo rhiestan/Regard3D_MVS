@@ -39,4 +39,7 @@ Decoded decode(std::span<const std::uint8_t> encoded, int desired_channels, bool
 // zlib stream (RFC 1950) of `data`; level as for stb (higher = smaller, slower).
 std::vector<std::uint8_t> zlib_compress(std::span<const std::uint8_t> data, int level);
 
+// Baseline JPEG of tightly packed 8-bit pixels (1-4 channels); quality 1..100.
+std::vector<std::uint8_t> jpeg_encode(const std::uint8_t* pixels, int width, int height, int channels, int quality);
+
 }  // namespace r3d::stb

@@ -128,3 +128,37 @@ TEST_CASE("PLY writer rejects inconsistent clouds and bad names") {
 
   CHECK_THROWS_AS(static_cast<void>(r3d::read_ply(dir.path() / "missing.ply")), r3d::IoError);
 }
+
+TEST_CASE("PLY writer in parts") {
+  for (const auto format : {r3d::PlyFormat::binary_little_endian, r3d::PlyFormat::ascii}) {
+    CAPTURE(static_cast<int>(format));
+    const r3d::test::TempDir dir;
+    const r3d::PointCloud cloud = make_cloud(300, true);
+    r3d::PlyWriteOptions options;
+    options.format = format;
+    {
+      r3d::PlyWriter writer(dir.path() / "parts.ply", options);
+      writer.append(r3d::PointCloud{});  // empty parts are skipped
+      for (std::size_t begin = 0; begin < cloud.size(); begin += 70) {
+        const std::size_t end = std::min(cloud.size(), begin + 70);
+        r3d::PointCloud part;
+        part.positions.assign(cloud.positions.begin() + begin, cloud.positions.begin() + end);
+        part.normals.assign(cloud.normals.begin() + begin, cloud.normals.begin() + end);
+        part.colors.assign(cloud.colors.begin() + begin, cloud.colors.begin() + end);
+        part.visibility.assign(cloud.visibility.begin() + begin, cloud.visibility.begin() + end);
+        for (const auto& [name, values] : cloud.scalars) {
+          part.scalars.emplace_back(name, std::vector<float>(values.begin() + begin, values.begin() + end));
+        }
+        writer.append(part);
+      }
+      CHECK(writer.size() == 300);
+      CHECK_THROWS(writer.append(make_cloud(3, false)));  // other attributes
+      writer.close();
+    }
+    check_same(r3d::read_ply(dir.path() / "parts.ply"), cloud);
+    {
+      r3d::PlyWriter empty(dir.path() / "empty.ply", options);
+    }
+    CHECK(r3d::read_ply(dir.path() / "empty.ply").size() == 0);
+  }
+}

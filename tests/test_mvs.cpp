@@ -608,9 +608,16 @@ TEST_CASE("Octree fusion: finer views win, fold validation, passes") {
     opt.voxel_factor = 2.0;
     opt.min_sources = 2;
     opt.fold_neighbourhood = false;
+    opt.with_views = true;
     r3d::FusionStats st;
     const r3d::PointCloud cloud = r3d::fuse_depth_maps(maps, origin, opt, &st);
     CHECK(st.unsupported_points > 0);
+    REQUIRE(cloud.visibility.size() == cloud.size());
+    bool both = true;
+    for (const std::vector<std::uint32_t>& views : cloud.visibility) {
+      both = both && views == std::vector<std::uint32_t>{0, 1};
+    }
+    CHECK(both);
     // With the neighbouring leaves, points next to the other view's footprint are kept as well.
     opt.fold_neighbourhood = true;
     r3d::FusionStats wide;

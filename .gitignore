@@ -7,3 +7,4 @@ compile_commands.json
 .vscode/
 .idea/
 *.user
+__pycache__/

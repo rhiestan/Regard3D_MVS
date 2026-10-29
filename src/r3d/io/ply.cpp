@@ -6,8 +6,10 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <format>
 #include <fstream>
 #include <locale>
+#include <memory>
 #include <optional>
 #include <sstream>
 #include <string_view>
@@ -96,7 +98,9 @@ void validate_property_name(const std::string& name) {
 
 }  // namespace
 
-void write_ply(const std::filesystem::path& path, const PointCloud& cloud, const PlyWriteOptions& options) {
+namespace {
+
+void check_options(const PointCloud& cloud, const PlyWriteOptions& options) {
   cloud.validate();
   for (const auto& [name, values] : cloud.scalars) {
     validate_property_name(name);
@@ -106,15 +110,24 @@ void write_ply(const std::filesystem::path& path, const PointCloud& cloud, const
       throw_error("PLY comments must not contain line breaks");
     }
   }
+}
 
-  std::ofstream file(path, std::ios::binary | std::ios::trunc);
-  if (!file) {
-    throw_io_error("cannot open '{}' for writing", path_string(path));
+// Same attributes (and origin, for float positions) as the header was written for.
+bool same_layout(const PointCloud& a, const PointCloud& b) {
+  if (a.has_normals() != b.has_normals() || a.has_colors() != b.has_colors() ||
+      a.has_visibility() != b.has_visibility() || a.scalars.size() != b.scalars.size() || a.origin != b.origin) {
+    return false;
   }
-  const std::size_t n = cloud.size();
-  const std::string header = make_header(cloud, options, n);
-  file.write(header.data(), static_cast<std::streamsize>(header.size()));
+  for (std::size_t k = 0; k < a.scalars.size(); ++k) {
+    if (a.scalars[k].first != b.scalars[k].first) {
+      return false;
+    }
+  }
+  return true;
+}
 
+void write_points(std::ofstream& file, const PointCloud& cloud, const PlyWriteOptions& options) {
+  const std::size_t n = cloud.size();
   // Points are serialised in blocks to bound the temporary memory.
   constexpr std::size_t kBlock = 1u << 16;
   std::vector<std::uint8_t> buffer;
@@ -188,9 +201,116 @@ void write_ply(const std::filesystem::path& path, const PointCloud& cloud, const
       file.write(text.data(), static_cast<std::streamsize>(text.size()));
     }
   }
-  if (!file) {
-    throw_io_error("error writing '{}'", path_string(path));
+}
+
+}  // namespace
+
+struct PlyWriter::Impl {
+  std::filesystem::path path;
+  PlyWriteOptions options;
+  std::ofstream file;
+  bool streaming = true;          // vertex count patched on close
+  std::size_t expected = 0;       // !streaming: the count in the header
+  std::size_t written = 0;
+  std::streamoff count_pos = -1;  // offset of the vertex count in the header
+  PointCloud layout;              // attributes of the header (no points)
+  bool closed = false;
+
+  void open(const PointCloud& first) {
+    check_options(first, options);
+    file.open(path, std::ios::binary | std::ios::trunc);
+    if (!file) {
+      throw_io_error("cannot open '{}' for writing", path_string(path));
+    }
+    layout.origin = first.origin;
+    layout.normals.assign(first.has_normals() ? 1 : 0, Eigen::Vector3f::Zero());
+    layout.colors.assign(first.has_colors() ? 1 : 0, std::array<std::uint8_t, 3>{});
+    layout.visibility.assign(first.has_visibility() ? 1 : 0, {});
+    for (const auto& [name, values] : first.scalars) {
+      layout.scalars.emplace_back(name, std::vector<float>{});
+    }
+    // The count is padded to a fixed width so that it can be overwritten in place.
+    static constexpr std::string_view kMarker = "element vertex ";
+    std::string header = make_header(first, options, 0);
+    const std::size_t at = header.find(kMarker) + kMarker.size();
+    header.replace(at, header.find('\n', at) - at,
+                   streaming ? std::format("{:<20}", 0) : std::format("{}", expected));
+    count_pos = static_cast<std::streamoff>(at);
+    file.write(header.data(), static_cast<std::streamsize>(header.size()));
   }
+};
+
+PlyWriter::PlyWriter(const std::filesystem::path& path, const PlyWriteOptions& options)
+    : impl_(std::make_unique<Impl>()) {
+  impl_->path = path;
+  impl_->options = options;
+}
+
+PlyWriter::~PlyWriter() {
+  if (impl_ && !impl_->closed) {
+    try {
+      close();
+    } catch (...) {  // NOLINT(bugprone-empty-catch): destructors must not throw; call close() to see errors
+    }
+  }
+}
+
+void PlyWriter::append(const PointCloud& part) {
+  Impl& w = *impl_;
+  if (w.closed) {
+    throw_error("PlyWriter: append after close");
+  }
+  if (part.size() == 0) {
+    return;
+  }
+  if (!w.file.is_open()) {
+    w.open(part);
+  } else {
+    part.validate();
+    if (!same_layout(part, w.layout)) {
+      throw_error("PlyWriter: '{}': parts differ in their attributes or origin", path_string(w.path));
+    }
+  }
+  write_points(w.file, part, w.options);
+  w.written += part.size();
+  if (!w.file) {
+    throw_io_error("error writing '{}'", path_string(w.path));
+  }
+}
+
+void PlyWriter::close() {
+  Impl& w = *impl_;
+  if (w.closed) {
+    return;
+  }
+  w.closed = true;
+  if (!w.file.is_open()) {
+    w.open(PointCloud{});  // no points: positions only
+  }
+  if (!w.streaming && w.written != w.expected) {
+    throw_error("PlyWriter: '{}': {} points written, {} announced", path_string(w.path), w.written, w.expected);
+  }
+  if (w.streaming) {
+    w.file.seekp(w.count_pos);
+    const std::string count = std::format("{:<20}", w.written);
+    w.file.write(count.data(), static_cast<std::streamsize>(count.size()));
+  }
+  w.file.close();
+  if (!w.file) {
+    throw_io_error("error writing '{}'", path_string(w.path));
+  }
+}
+
+std::size_t PlyWriter::size() const noexcept { return impl_->written; }
+
+void write_ply(const std::filesystem::path& path, const PointCloud& cloud, const PlyWriteOptions& options) {
+  check_options(cloud, options);
+  PlyWriter writer(path, options);
+  writer.impl_->streaming = false;
+  writer.impl_->expected = cloud.size();
+  writer.impl_->open(cloud);
+  writer.append(cloud);
+  writer.close();
 }
 
 // ---------------------------------------------------------------------------

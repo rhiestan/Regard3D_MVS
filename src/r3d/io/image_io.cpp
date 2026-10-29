@@ -1,5 +1,6 @@
 #include "r3d/io/image_io.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstdlib>
 #include <cstring>
@@ -228,6 +229,19 @@ void write_png(const std::filesystem::path& path, ImageView<const std::uint8_t> 
 
 void write_png(const std::filesystem::path& path, ImageView<const std::uint16_t> image, int compression_level) {
   write_png_impl(path, image, compression_level);
+}
+
+void write_jpeg(const std::filesystem::path& path, ImageView<const std::uint8_t> image, int quality) {
+  if (image.empty() || (image.channels() != 1 && image.channels() != 3)) {
+    throw_error("write_jpeg: unsupported image {}x{}x{}", image.width(), image.height(), image.channels());
+  }
+  const std::size_t row_elems = static_cast<std::size_t>(image.width()) * static_cast<std::size_t>(image.channels());
+  std::vector<std::uint8_t> pixels(row_elems * static_cast<std::size_t>(image.height()));
+  for (int y = 0; y < image.height(); ++y) {
+    std::memcpy(pixels.data() + static_cast<std::size_t>(y) * row_elems, image.row(y), row_elems);
+  }
+  write_file(path, stb::jpeg_encode(pixels.data(), image.width(), image.height(), image.channels(),
+                                    std::clamp(quality, 1, 100)));
 }
 
 }  // namespace r3d

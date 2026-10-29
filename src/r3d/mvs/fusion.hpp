@@ -41,6 +41,7 @@ struct FusionOptions {
   int min_sources = 1;              // distinct views per fused point
   bool fold_neighbourhood = false;  // count the views of the neighbouring leaves as well
   float normal_jump = 0.05F;        // relative depth jump that separates surfaces for normals
+  bool with_views = false;          // fill PointCloud::visibility with the depth map indices of each point
   std::size_t memory_budget = std::size_t{2} << 30;  // bytes of point data per pass
 };
 
@@ -67,6 +68,13 @@ using DepthMapSource = std::function<std::shared_ptr<const DepthMap>(std::size_t
 [[nodiscard]] PointCloud fuse_depth_maps(std::size_t count, const DepthMapSource& source, std::vector<float> gsd,
                                          const Eigen::Vector3d& origin, const FusionOptions& options = {},
                                          FusionStats* stats = nullptr);
+
+// The same with the fused points handed to `sink` in parts (one per batch of
+// chunks, in the same order as above) instead of being collected.
+using PointSink = std::function<void(PointCloud&&)>;
+void fuse_depth_maps(std::size_t count, const DepthMapSource& source, std::vector<float> gsd,
+                     const Eigen::Vector3d& origin, const FusionOptions& options, const PointSink& sink,
+                     FusionStats* stats = nullptr);
 
 // Appends the GSD of every 4th pixel in both directions.
 void sample_gsd(const DepthMap& map, std::vector<float>& out);

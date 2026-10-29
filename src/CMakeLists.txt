@@ -10,6 +10,7 @@ add_library(r3d STATIC
   r3d/core/thread_pool.cpp
   r3d/io/colmap_scene.cpp
   r3d/io/image_io.cpp
+  r3d/io/mesher_export.cpp
   r3d/io/openmvg_scene.cpp
   r3d/io/pfm.cpp
   r3d/io/ply.cpp

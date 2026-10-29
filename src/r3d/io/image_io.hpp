@@ -30,6 +30,9 @@ struct ImageFileInfo {
 void write_png(const std::filesystem::path& path, ImageView<const std::uint8_t> image, int compression_level = 8);
 void write_png(const std::filesystem::path& path, ImageView<const std::uint16_t> image, int compression_level = 8);
 
+// Baseline JPEG with 1 or 3 channels, quality 1..100.
+void write_jpeg(const std::filesystem::path& path, ImageView<const std::uint8_t> image, int quality = 95);
+
 // Whole-file helpers (binary).
 [[nodiscard]] std::vector<std::uint8_t> read_file(const std::filesystem::path& path);
 void write_file(const std::filesystem::path& path, const std::vector<std::uint8_t>& data);

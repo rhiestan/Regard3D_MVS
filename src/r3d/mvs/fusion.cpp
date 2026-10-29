@@ -6,6 +6,7 @@
 #include <bit>
 #include <cmath>
 #include <cstdint>
+#include <iterator>
 #include <limits>
 #include <mutex>
 #include <span>
@@ -160,6 +161,7 @@ struct Output {
   std::vector<std::array<std::uint8_t, 3>> colors;
   std::vector<float> value;
   std::vector<float> confidence;
+  std::vector<std::vector<std::uint32_t>> views;
   std::size_t coarser = 0;
   std::size_t unsupported = 0;
 };
@@ -304,6 +306,10 @@ void fuse_chunk(std::span<Entry> entries, const Grid& grid, const FusionOptions&
                             static_cast<std::uint8_t>(std::lround(std::clamp(color.z(), 0.0, 255.0)))});
       out.value.push_back(static_cast<float>(leaf.gsd_sum / leaf.weight));
       out.confidence.push_back(static_cast<float>(leaf.count));
+      if (options.with_views) {
+        out.views.emplace_back(views.begin() + static_cast<std::ptrdiff_t>(leaf.views_begin),
+                               views.begin() + static_cast<std::ptrdiff_t>(leaf.views_end));
+      }
     }
   }
 }
@@ -344,14 +350,39 @@ PointCloud fuse_depth_maps(const std::vector<DepthMap>& maps, const Eigen::Vecto
 
 PointCloud fuse_depth_maps(std::size_t count, const DepthMapSource& source, std::vector<float> gsd,
                            const Eigen::Vector3d& origin, const FusionOptions& options, FusionStats* stats) {
-  FusionStats st;
   PointCloud cloud;
   cloud.origin = origin;
+  bool first = true;
+  fuse_depth_maps(
+      count, source, std::move(gsd), origin, options,
+      [&](PointCloud&& part) {
+        if (first) {
+          cloud = std::move(part);
+          first = false;
+          return;
+        }
+        cloud.positions.insert(cloud.positions.end(), part.positions.begin(), part.positions.end());
+        cloud.normals.insert(cloud.normals.end(), part.normals.begin(), part.normals.end());
+        cloud.colors.insert(cloud.colors.end(), part.colors.begin(), part.colors.end());
+        for (std::size_t k = 0; k < cloud.scalars.size(); ++k) {
+          std::vector<float>& to = cloud.scalars[k].second;
+          const std::vector<float>& from = part.scalars[k].second;
+          to.insert(to.end(), from.begin(), from.end());
+        }
+        std::move(part.visibility.begin(), part.visibility.end(), std::back_inserter(cloud.visibility));
+      },
+      stats);
+  return cloud;
+}
+
+void fuse_depth_maps(std::size_t count, const DepthMapSource& source, std::vector<float> gsd,
+                     const Eigen::Vector3d& origin, const FusionOptions& options, const PointSink& sink,
+                     FusionStats* stats) {
+  FusionStats st;
   auto finish = [&]() {
     if (stats != nullptr) {
       *stats = st;
     }
-    return cloud;
   };
   if (gsd.empty()) {
     return finish();
@@ -436,8 +467,6 @@ PointCloud fuse_depth_maps(std::size_t count, const DepthMapSource& source, std:
   st.passes = static_cast<int>(batch_size.size());
 
   std::vector<Eigen::Vector3d> centres(count);
-  std::vector<float> value;
-  std::vector<float> confidence;
   std::vector<Entry> buffer;
   std::size_t first_chunk = 0;
   for (std::size_t b = 0; b < batch_size.size(); ++b) {
@@ -498,23 +527,28 @@ PointCloud fuse_depth_maps(std::size_t count, const DepthMapSource& source, std:
                    outputs[c - first_chunk]);
       }
     });
+    PointCloud part;
+    part.origin = origin;
+    std::vector<float> value;
+    std::vector<float> confidence;
     for (Output& o : outputs) {
-      cloud.positions.insert(cloud.positions.end(), o.positions.begin(), o.positions.end());
-      cloud.normals.insert(cloud.normals.end(), o.normals.begin(), o.normals.end());
-      cloud.colors.insert(cloud.colors.end(), o.colors.begin(), o.colors.end());
+      part.positions.insert(part.positions.end(), o.positions.begin(), o.positions.end());
+      part.normals.insert(part.normals.end(), o.normals.begin(), o.normals.end());
+      part.colors.insert(part.colors.end(), o.colors.begin(), o.colors.end());
       value.insert(value.end(), o.value.begin(), o.value.end());
       confidence.insert(confidence.end(), o.confidence.begin(), o.confidence.end());
+      std::move(o.views.begin(), o.views.end(), std::back_inserter(part.visibility));
       st.coarser_points += o.coarser;
       st.unsupported_points += o.unsupported;
       o = Output{};
     }
+    part.scalars.emplace_back("value", std::move(value));
+    part.scalars.emplace_back("confidence", std::move(confidence));
+    st.output_points += part.size();
+    sink(std::move(part));
     first_chunk = end_chunk;
   }
-  buffer = {};
-  cloud.scalars.emplace_back("value", std::move(value));
-  cloud.scalars.emplace_back("confidence", std::move(confidence));
-  st.output_points = cloud.size();
-  return finish();
+  finish();
 }
 
 }  // namespace r3d

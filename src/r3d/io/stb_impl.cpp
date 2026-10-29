@@ -103,4 +103,17 @@ std::vector<std::uint8_t> zlib_compress(std::span<const std::uint8_t> data, int 
   return result;
 }
 
+std::vector<std::uint8_t> jpeg_encode(const std::uint8_t* pixels, int width, int height, int channels, int quality) {
+  std::vector<std::uint8_t> result;
+  auto append = [](void* context, void* data, int size) {
+    auto* out = static_cast<std::vector<std::uint8_t>*>(context);
+    const auto* bytes = static_cast<const std::uint8_t*>(data);
+    out->insert(out->end(), bytes, bytes + size);
+  };
+  if (stbi_write_jpg_to_func(append, &result, width, height, channels, pixels, quality) == 0) {
+    throw_io_error("JPEG encoding failed");
+  }
+  return result;
+}
+
 }  // namespace r3d::stb

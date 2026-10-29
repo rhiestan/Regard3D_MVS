@@ -1,3 +1,4 @@
+#include <cmath>
 #include <cstdint>
 #include <fstream>
 
@@ -60,6 +61,33 @@ TEST_CASE("16-bit PNG round trip") {
     CHECK(r3d::read_image_info(path).bit_depth == 16);
     check_equal(r3d::read_image_u16(path), img);
   }
+}
+
+TEST_CASE("JPEG writing") {
+  const r3d::test::TempDir dir;
+  r3d::ImageU8 img(40, 24, 3);  // smooth: JPEG is lossy
+  for (int y = 0; y < 24; ++y) {
+    for (int x = 0; x < 40; ++x) {
+      for (int c = 0; c < 3; ++c) {
+        img(x, y, c) = static_cast<std::uint8_t>(x * 5 + y * 3 + c * 20);
+      }
+    }
+  }
+  r3d::write_jpeg(dir.path() / "a.jpg", img.view(), 100);
+  const r3d::ImageU8 back = r3d::read_image_u8(dir.path() / "a.jpg");
+  REQUIRE(back.width() == 40);
+  REQUIRE(back.height() == 24);
+  REQUIRE(back.channels() == 3);
+  double error = 0.0;
+  for (int y = 0; y < 24; ++y) {
+    for (int x = 0; x < 40; ++x) {
+      for (int c = 0; c < 3; ++c) {
+        error += std::abs(static_cast<double>(back(x, y, c)) - img(x, y, c));
+      }
+    }
+  }
+  CHECK(error / (40 * 24 * 3) < 6.0);
+  CHECK_THROWS(r3d::write_jpeg(dir.path() / "b.jpg", r3d::ImageU8(4, 4, 2).view()));
 }
 
 TEST_CASE("Channel conversion and bit-depth promotion on read") {

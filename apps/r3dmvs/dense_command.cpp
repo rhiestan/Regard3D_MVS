@@ -18,7 +18,6 @@
 #include "r3d/core/thread_pool.hpp"
 #include "r3d/core/timer.hpp"
 #include "r3d/io/image_io.hpp"
-#include "r3d/io/ply.hpp"
 #include "r3d/mvs/depth_map_store.hpp"
 #include "r3d/rectify/rectification.hpp"
 #include "r3d/select/view_selection.hpp"
@@ -226,6 +225,8 @@ void add_dense_options(CLI::App& command, DenseArgs& args) {
                    "Count the views of the neighbouring leaves for --min-sources (default: the leaf only)");
   command.add_option("--fusion-memory", args.fusion_memory_mb, "Memory for the fusion's point data per pass (MB)")
       ->capture_default_str();
+  command.add_flag("--with-views", args.fusion.with_views, "Write the ids of the views of each point (view_ids)");
+  add_layout_options(command, args.layout);
   add_matcher_options(command, args.depth.stereo);
 }
 
@@ -418,8 +419,20 @@ void run_dense(const DenseArgs& args, const r3d::Scene& scene) {
   r3d::FusionStats fst;
   r3d::FusionOptions fusion = args.fusion;
   fusion.memory_budget = args.fusion_memory_mb << 20;
-  const r3d::PointCloud cloud = r3d::fuse_depth_maps(
-      num_views, [&](std::size_t v) { return final_maps->get(v); }, std::move(gsd), origin, fusion, &fst);
+  // The fused points go to the PLY file batch by batch.
+  CloudWriter writer(args.output, args.layout, "r3dmvs dense cloud", georeferenced);
+  r3d::fuse_depth_maps(
+      num_views, [&](std::size_t v) { return final_maps->get(v); }, std::move(gsd), origin, fusion,
+      [&](r3d::PointCloud&& part) {
+        for (std::vector<std::uint32_t>& views : part.visibility) {
+          for (std::uint32_t& v : views) {
+            v = scene.views[v].source_id;
+          }
+        }
+        writer.append(part);
+      },
+      &fst);
+  writer.close();
   final_maps.reset();
   const double fuse_seconds = watch.elapsed_seconds();
   std::printf("fusion: %zu points, %zu coarser, %zu unsupported -> %zu (leaf %.4g x 2^0..%d, median GSD %.4g, "
@@ -427,10 +440,6 @@ void run_dense(const DenseArgs& args, const r3d::Scene& scene) {
               fst.input_points, fst.coarser_points, fst.unsupported_points, fst.output_points, fst.voxel_size,
               fst.levels - 1, fst.median_gsd, fst.chunks, fst.passes, fuse_seconds);
 
-  r3d::PlyWriteOptions ply;
-  ply.double_positions = georeferenced;
-  ply.comments.push_back("r3dmvs dense cloud");
-  r3d::write_ply(utf8_path(args.output), cloud, ply);
   std::printf("depth maps %.1f s, refinement %.1f s, consistency %.1f s, visibility %.1f s, fusion %.1f s, "
               "total %.1f s, peak memory %.0f MB\n",
               depth_seconds, refine_seconds, filter_seconds, visibility_seconds, fuse_seconds,

@@ -1,6 +1,8 @@
 #pragma once
 
+#include <cstddef>
 #include <filesystem>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -24,6 +26,27 @@ struct PlyWriteOptions {
 // "confidence"), [list uchar uint view_ids]. At most 255 view ids are written
 // per point.
 void write_ply(const std::filesystem::path& path, const PointCloud& cloud, const PlyWriteOptions& options = {});
+
+// Writes a PLY file part by part, for clouds that are not held in memory at
+// once. The properties are those of the first non-empty part; every part must
+// have the same attributes and origin. The vertex count is written on close()
+// (padded with spaces in the header). The destructor closes but loses errors.
+class PlyWriter {
+ public:
+  explicit PlyWriter(const std::filesystem::path& path, const PlyWriteOptions& options = {});
+  ~PlyWriter();
+  PlyWriter(const PlyWriter&) = delete;
+  PlyWriter& operator=(const PlyWriter&) = delete;
+
+  void append(const PointCloud& part);
+  void close();
+  [[nodiscard]] std::size_t size() const noexcept;  // points written
+
+ private:
+  struct Impl;
+  std::unique_ptr<Impl> impl_;
+  friend void write_ply(const std::filesystem::path& path, const PointCloud& cloud, const PlyWriteOptions& options);
+};
 
 // Reads the "vertex" element of an ascii, binary_little_endian or
 // binary_big_endian PLY file; other elements (e.g. faces) are skipped.

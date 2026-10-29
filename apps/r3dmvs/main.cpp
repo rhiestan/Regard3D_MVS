@@ -32,6 +32,7 @@
 #include "r3d/stereo/stereo_matcher.hpp"
 #include "r3d/version.hpp"
 #include "dense_command.hpp"
+#include "export_command.hpp"
 #include "stereo_commands.hpp"
 
 namespace {
@@ -365,6 +366,15 @@ int main(int argc, char** argv) {
   dense->add_option("--image-dir", dense_scene.image_dir, "Directory with the images (default: from the scene)");
   r3dmvs::add_dense_options(*dense, dense_args);
 
+  SceneArgs export_scene;
+  r3dmvs::ExportArgs export_args;
+  CLI::App* export_cmd =
+      app.add_subcommand("export", "Write a dense cloud for PoissonRecon / FSSR, and the scene for texrecon");
+  export_cmd->add_option("input", export_scene.input,
+                         "sfm_data.json, sfm_data.bin or a COLMAP model directory (for --texrecon-dir)");
+  export_cmd->add_option("--image-dir", export_scene.image_dir, "Directory with the images (default: from the scene)");
+  r3dmvs::add_export_options(*export_cmd, export_args);
+
   try {
     app.parse(argc, argv);
   } catch (const CLI::ParseError& e) {
@@ -387,6 +397,13 @@ int main(int argc, char** argv) {
       run_pair(pair_args);
     } else if (dense->parsed()) {
       r3dmvs::run_dense(dense_args, read_scene(dense_scene));
+    } else if (export_cmd->parsed()) {
+      if (export_scene.input.empty()) {
+        r3dmvs::run_export(export_args, nullptr);
+      } else {
+        const r3d::Scene loaded = read_scene(export_scene);
+        r3dmvs::run_export(export_args, &loaded);
+      }
     }
   } catch (const std::exception& e) {
     r3d::log_error("{}", e.what());
