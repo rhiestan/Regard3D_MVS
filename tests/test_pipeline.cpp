@@ -33,7 +33,7 @@ r3d::Pose look_at(const Eigen::Vector3d& center, const Eigen::Vector3d& target) 
   return pose;
 }
 
-// Smooth texture on the plane (wavelengths of about 8 to 25 pixels), 4x4 supersampled.
+// Smooth texture on the plane (wavelengths of about 6 to 19 pixels), 2x2 supersampled.
 r3d::ImageU8 render(const r3d::PinholeIntrinsics& k, const r3d::Pose& pose, const Plane& plane) {
   const Eigen::Vector3d u = plane.normal.unitOrthogonal();
   const Eigen::Vector3d v = plane.normal.cross(u);
@@ -44,9 +44,9 @@ r3d::ImageU8 render(const r3d::PinholeIntrinsics& k, const r3d::Pose& pose, cons
   for (int y = 0; y < k.height; ++y) {
     for (int x = 0; x < k.width; ++x) {
       double acc = 0.0;
-      for (int sy = 0; sy < 4; ++sy) {
-        for (int sx = 0; sx < 4; ++sx) {
-          const Eigen::Vector2d px(x - 0.375 + 0.25 * sx, y - 0.375 + 0.25 * sy);
+      for (int sy = 0; sy < 2; ++sy) {
+        for (int sx = 0; sx < 2; ++sx) {
+          const Eigen::Vector2d px(x - 0.25 + 0.5 * sx, y - 0.25 + 0.5 * sy);
           const Eigen::Vector3d dir = pose.camera_to_world(k.unproject(px, 1.0)) - pose.center;
           const double t = (plane.point - pose.center).dot(plane.normal) / dir.dot(plane.normal);
           const Eigen::Vector3d xw = pose.center + t * dir;
@@ -55,7 +55,7 @@ r3d::ImageU8 render(const r3d::PinholeIntrinsics& k, const r3d::Pose& pose, cons
           }
         }
       }
-      img(x, y) = static_cast<std::uint8_t>(std::lround(128.0 + 25.0 * acc / 16.0));
+      img(x, y) = static_cast<std::uint8_t>(std::lround(128.0 + 25.0 * acc / 4.0));
     }
   }
   return img;
@@ -68,11 +68,11 @@ r3d::Scene plane_scene(const std::filesystem::path& dir, Plane& plane) {
   plane.point = Eigen::Vector3d(0.0, 0.0, 5.0);
   r3d::Scene scene;
   r3d::CameraIntrinsics cam;
-  cam.width = 320;
-  cam.height = 240;
-  cam.fx = cam.fy = 300.0;
-  cam.cx = 159.5;
-  cam.cy = 119.5;
+  cam.width = 240;
+  cam.height = 180;
+  cam.fx = cam.fy = 225.0;
+  cam.cx = 119.5;
+  cam.cy = 89.5;
   scene.cameras.push_back(cam);
   for (int i = 0; i < 4; ++i) {
     r3d::SceneView view;
@@ -141,96 +141,99 @@ TEST_CASE("depth_map_resolution limits the longer side") {
   CHECK(r3d::depth_map_resolution(scene, 0, o) == doctest::Approx(0.1));
 }
 
-TEST_CASE("densify: a plane from four views, with progress and cancellation") {
+TEST_CASE("densify: a plane from four views, with progress, reuse and cancellation") {
+  // One full run; the reuse and cancellation checks start from its cached depth maps, which keeps
+  // the test short in sanitizer builds.
   const r3d::test::TempDir dir;
   Plane plane;
   const r3d::Scene scene = plane_scene(dir.path(), plane);
   REQUIRE(scene.num_points() > 50);
   r3d::DenseOptions options = r3d::dense_preset(r3d::DensePreset::normal);
   options.fusion.with_views = true;
+  options.work_dir = dir.path() / "work";
 
-  SUBCASE("points on the plane, progress in order up to 1") {
-    std::vector<r3d::DenseProgress> steps;
-    r3d::DenseCallbacks callbacks;
-    callbacks.progress = [&](const r3d::DenseProgress& p) { steps.push_back(p); };
-    std::size_t points = 0;
-    std::vector<double> distance;
-    bool views_are_source_ids = true;
-    r3d::DenseReport report;
-    r3d::densify(
-        scene, options,
-        [&](r3d::PointCloud&& part) {
-          points += part.size();
-          for (std::size_t i = 0; i < part.size(); ++i) {
-            distance.push_back(std::abs(plane.distance(part.positions[i].cast<double>())));
-            for (const std::uint32_t v : part.visibility[i]) {
-              views_are_source_ids = views_are_source_ids && v >= 10 && v < 14;
-            }
+  std::vector<r3d::DenseProgress> steps;
+  r3d::DenseCallbacks callbacks;
+  callbacks.progress = [&](const r3d::DenseProgress& p) { steps.push_back(p); };
+  std::size_t points = 0;
+  std::vector<double> distance;
+  bool views_are_source_ids = true;
+  r3d::DenseReport first;
+  r3d::densify(
+      scene, options,
+      [&](r3d::PointCloud&& part) {
+        points += part.size();
+        for (std::size_t i = 0; i < part.size(); ++i) {
+          distance.push_back(std::abs(plane.distance(part.positions[i].cast<double>())));
+          for (const std::uint32_t v : part.visibility[i]) {
+            views_are_source_ids = views_are_source_ids && v >= 10 && v < 14;
           }
-        },
-        callbacks, &report);
-    CHECK(report.views == 4);
-    CHECK(report.pairs_matched > 0);
-    CHECK(report.fusion.output_points == points);
-    CHECK(points > 20000);
-    // GSD 0.017: median 0.13 GSD (0.04% of the distance), a few outliers at the image borders.
-    std::sort(distance.begin(), distance.end());
-    CHECK(distance[distance.size() / 2] < 0.005);
-    CHECK(distance[distance.size() * 99 / 100] < 0.04);
-    CHECK(distance.back() < 0.25);
-    CHECK(views_are_source_ids);
-    REQUIRE(!steps.empty());
-    for (std::size_t i = 1; i < steps.size(); ++i) {
-      CHECK(steps[i].fraction >= steps[i - 1].fraction);
-      CHECK(steps[i].stage >= steps[i - 1].stage);
-    }
-    CHECK(steps.back().fraction == 1.0);
-    CHECK(steps.back().stage == r3d::DenseStage::fusion);
-  }
-
-  SUBCASE("densify_to_ply writes the layout") {
-    const std::filesystem::path out = dir.path() / "cloud.ply";
-    r3d::CloudLayoutOptions layout;
-    layout.layout = r3d::CloudLayout::poisson;
-    r3d::densify_to_ply(scene, options, out, layout);
-    const r3d::PointCloud cloud = r3d::read_ply(out);
-    CHECK(cloud.size() > 20000);
-    CHECK(cloud.has_normals());
-    CHECK(cloud.scalars.empty());
-  }
-
-  SUBCASE("cancellation in every stage stops with Cancelled and removes the file") {
-    for (const r3d::DenseStage stage : {r3d::DenseStage::depth_maps, r3d::DenseStage::refinement,
-                                        r3d::DenseStage::consistency, r3d::DenseStage::visibility,
-                                        r3d::DenseStage::fusion}) {
-      CAPTURE(r3d::to_string(stage));
-      r3d::CancellationToken token;
-      r3d::DenseCallbacks callbacks;
-      callbacks.cancel = &token;
-      r3d::DenseStage last = r3d::DenseStage::depth_maps;
-      callbacks.progress = [&](const r3d::DenseProgress& p) {
-        last = p.stage;
-        if (p.stage == stage && p.done > 0) {
-          token.request();
         }
-      };
-      const std::filesystem::path out = dir.path() / "cancelled.ply";
-      CHECK_THROWS_AS(r3d::densify_to_ply(scene, options, out, {}, callbacks), r3d::Cancelled);
-      CHECK(last == stage);
-      CHECK_FALSE(std::filesystem::exists(out));
-    }
+      },
+      callbacks, &first);
+  CHECK(first.views == 4);
+  CHECK(first.cached_views == 0);
+  CHECK(first.pairs_matched > 0);
+  CHECK(first.fusion.output_points == points);
+  CHECK(points > 20000);
+  // GSD 0.022: median 0.1 GSD (0.04% of the distance), a few outliers at the image borders.
+  REQUIRE(!distance.empty());
+  std::sort(distance.begin(), distance.end());
+  CHECK(distance[distance.size() / 2] < 0.005);
+  CHECK(distance[distance.size() * 99 / 100] < 0.04);
+  CHECK(distance.back() < 0.25);
+  CHECK(views_are_source_ids);
+  REQUIRE(!steps.empty());
+  for (std::size_t i = 1; i < steps.size(); ++i) {
+    CHECK(steps[i].fraction >= steps[i - 1].fraction);
+    CHECK(steps[i].stage >= steps[i - 1].stage);
   }
+  CHECK(steps.back().fraction == 1.0);
+  CHECK(steps.back().stage == r3d::DenseStage::fusion);
 
-  SUBCASE("a work directory caches the depth maps for reuse") {
-    options.work_dir = dir.path() / "work";
-    r3d::DenseReport first;
-    r3d::densify(scene, options, [](r3d::PointCloud&&) {}, {}, &first);
-    CHECK(first.cached_views == 0);
-    options.reuse_refined = true;
-    r3d::DenseReport second;
-    r3d::densify(scene, options, [](r3d::PointCloud&&) {}, {}, &second);
-    CHECK(second.cached_views == 4);
-    CHECK(second.pairs_matched == 0);
-    CHECK(second.fusion.output_points == first.fusion.output_points);
+  // The refined maps from the work directory, written in the poisson layout.
+  r3d::DenseOptions reuse = options;
+  reuse.reuse_refined = true;
+  const std::filesystem::path out = dir.path() / "cloud.ply";
+  r3d::CloudLayoutOptions layout;
+  layout.layout = r3d::CloudLayout::poisson;
+  r3d::DenseReport second;
+  r3d::densify_to_ply(scene, reuse, out, layout, {}, &second);
+  CHECK(second.cached_views == 4);
+  CHECK(second.pairs_matched == 0);
+  CHECK(second.fusion.output_points == points);
+  const r3d::PointCloud cloud = r3d::read_ply(out);
+  CHECK(cloud.size() == points);
+  CHECK(cloud.has_normals());
+  CHECK(cloud.scalars.empty());
+
+  // Cancellation in every stage stops with Cancelled and removes the file. Matching runs without
+  // the cache, refinement from the cached matched maps, the later stages from the refined maps.
+  for (const r3d::DenseStage stage : {r3d::DenseStage::depth_maps, r3d::DenseStage::refinement,
+                                      r3d::DenseStage::consistency, r3d::DenseStage::visibility,
+                                      r3d::DenseStage::fusion}) {
+    CAPTURE(r3d::to_string(stage));
+    r3d::DenseOptions o = options;
+    if (stage == r3d::DenseStage::depth_maps) {
+      o.work_dir.clear();
+    } else if (stage == r3d::DenseStage::refinement) {
+      o.reuse = true;
+    } else {
+      o.reuse_refined = true;
+    }
+    r3d::CancellationToken token;
+    r3d::DenseCallbacks cancel;
+    cancel.cancel = &token;
+    r3d::DenseStage last = r3d::DenseStage::depth_maps;
+    cancel.progress = [&](const r3d::DenseProgress& p) {
+      last = p.stage;
+      if (p.stage == stage && p.done > 0) {
+        token.request();
+      }
+    };
+    const std::filesystem::path cancelled = dir.path() / "cancelled.ply";
+    CHECK_THROWS_AS(r3d::densify_to_ply(scene, o, cancelled, {}, cancel), r3d::Cancelled);
+    CHECK(last == stage);
+    CHECK_FALSE(std::filesystem::exists(cancelled));
   }
 }

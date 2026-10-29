@@ -30,5 +30,11 @@ if(IS_DIRECTORY "${R3D_TESTDATA_DIR}")
 endif()
 
 # One CTest test per doctest test case; the timeout keeps a hung test from blocking CI.
+# Unoptimised sanitizer builds run the matcher tests several hundred times slower.
+if(R3D_SANITIZERS)
+  set(_r3d_test_timeout 900)
+else()
+  set(_r3d_test_timeout 300)
+endif()
 include(doctest)
-doctest_discover_tests(r3d_tests PROPERTIES TIMEOUT 300)
+doctest_discover_tests(r3d_tests PROPERTIES TIMEOUT ${_r3d_test_timeout})
