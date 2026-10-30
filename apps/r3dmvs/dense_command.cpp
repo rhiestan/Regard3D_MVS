@@ -134,6 +134,12 @@ void add_dense_options(CLI::App& command, DenseArgs& args) {
       ->capture_default_str();
   command.add_flag("--reject-weak", args.options.consistency.reject_weak,
                    "Remove all weak depths, not only small weak segments (strict: holes on plain walls)");
+  command.add_option("--halo-px", args.options.consistency.halo_px,
+                     "Remove halos: depths of the background colour between a hole and an image edge up to this many pixels away (0: off)")
+      ->capture_default_str();
+  command.add_option("--halo-colour", args.options.consistency.halo_colour,
+                     "Colour difference per channel (0..255) of an image edge for --halo-px")
+      ->capture_default_str();
   command.add_option("--depth-speckle-size", args.options.consistency.speckle_size,
                      "Smallest connected depth segment kept after the consistency check (pixels, 0: off)")
       ->capture_default_str();

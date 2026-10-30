@@ -1,6 +1,7 @@
 #include "r3d/mvs/consistency.hpp"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <span>
 #include <cmath>
@@ -235,6 +236,112 @@ std::size_t remove_weak_depths(DepthMap& map, const ConsistencyOptions& options)
   return removed;
 }
 
+std::size_t remove_depth_halos(DepthMap& map, int max_px, int colour_step) {
+  const int w = map.width();
+  const int h = map.height();
+  if (max_px <= 0 || map.color.empty() || w == 0) {
+    return 0;
+  }
+  // Large holes: invalid pixels whose 5 x 5 neighbourhood is invalid (outside counts as invalid).
+  constexpr int hole_r = 2;
+  const auto index = [w](int x, int y) {
+    return static_cast<std::size_t>(y) * static_cast<std::size_t>(w) + static_cast<std::size_t>(x);
+  };
+  const auto n = static_cast<std::size_t>(w) * static_cast<std::size_t>(h);
+  std::vector<std::uint8_t> row_empty(n, 0);
+  std::vector<std::uint8_t> hole(n, 0);
+  parallel_for(0, static_cast<std::size_t>(h), 16, [&](std::size_t begin, std::size_t end) {
+    for (auto y = static_cast<int>(begin); y < static_cast<int>(end); ++y) {
+      for (int x = 0; x < w; ++x) {
+        bool empty = true;
+        for (int u = std::max(x - hole_r, 0); u <= std::min(x + hole_r, w - 1) && empty; ++u) {
+          empty = map.depth(u, y) <= 0.0F;
+        }
+        row_empty[index(x, y)] = empty ? 1 : 0;
+      }
+    }
+  });
+  parallel_for(0, static_cast<std::size_t>(h), 16, [&](std::size_t begin, std::size_t end) {
+    for (auto y = static_cast<int>(begin); y < static_cast<int>(end); ++y) {
+      for (int x = 0; x < w; ++x) {
+        bool empty = true;
+        for (int v = std::max(y - hole_r, 0); v <= std::min(y + hole_r, h - 1) && empty; ++v) {
+          empty = row_empty[index(x, v)] != 0;
+        }
+        hole[index(x, y)] = empty ? 1 : 0;
+      }
+    }
+  });
+  const auto differs = [&](int x0, int y0, int x1, int y1) {
+    for (int c = 0; c < 3; ++c) {
+      if (std::abs(static_cast<int>(map.color(x0, y0, c)) - static_cast<int>(map.color(x1, y1, c))) >= colour_step) {
+        return true;
+      }
+    }
+    return false;
+  };
+  constexpr std::array<std::array<int, 2>, 8> kDirections{
+      {{1, 0}, {-1, 0}, {0, 1}, {0, -1}, {1, 1}, {1, -1}, {-1, 1}, {-1, -1}}};
+  std::vector<std::uint8_t> halo(n, 0);
+  parallel_for(0, static_cast<std::size_t>(h), 16, [&](std::size_t begin, std::size_t end) {
+    for (auto y = static_cast<int>(begin); y < static_cast<int>(end); ++y) {
+      for (int x = 0; x < w; ++x) {
+        if (map.depth(x, y) <= 0.0F) {
+          continue;
+        }
+        for (const auto& [dx, dy] : kDirections) {
+          // Outward: pixels of this colour up to a large hole.
+          int to_hole = 0;
+          for (int s = 1; s <= max_px; ++s) {
+            const int u = x + s * dx;
+            const int v = y + s * dy;
+            if (u < 0 || v < 0 || u >= w || v >= h || differs(u, v, x, y)) {
+              break;
+            }
+            if (hole[index(u, v)] != 0) {
+              to_hole = s;
+              break;
+            }
+          }
+          if (to_hole == 0) {
+            continue;
+          }
+          // Inward: a pixel of another colour before the depths end.
+          bool edge = false;
+          for (int s = 1; s <= max_px - to_hole; ++s) {
+            const int u = x - s * dx;
+            const int v = y - s * dy;
+            if (u < 0 || v < 0 || u >= w || v >= h) {
+              break;
+            }
+            if (differs(u, v, x, y)) {
+              edge = true;
+              break;
+            }
+            if (map.depth(u, v) <= 0.0F) {
+              break;
+            }
+          }
+          if (edge) {
+            halo[index(x, y)] = 1;
+            break;
+          }
+        }
+      }
+    }
+  });
+  std::size_t removed = 0;
+  for (int y = 0; y < h; ++y) {
+    for (int x = 0; x < w; ++x) {
+      if (halo[index(x, y)] != 0) {
+        map.depth(x, y) = 0.0F;
+        ++removed;
+      }
+    }
+  }
+  return removed;
+}
+
 void prepare_depth_map(DepthMap& map, const ConsistencyOptions& options, ConsistencyStats* stats) {
   ConsistencyStats st;
   st.input = map.num_valid();
@@ -339,11 +446,13 @@ void check_consistency(DepthMap& m, std::span<const DepthMap* const> neighbours,
   }
   m.support = std::move(support);
   st.weak = remove_weak_depths(m, options);
+  st.halo = remove_depth_halos(m, options.halo_px, options.halo_colour);
   st.speckles = remove_depth_speckles(m, options.speckle_size, options.speckle_step);
   st.output = m.num_valid();
   if (stats != nullptr) {
     stats->rejected += st.rejected;
     stats->weak += st.weak;
+    stats->halo += st.halo;
     stats->speckles += st.speckles;
     stats->output += st.output;
   }

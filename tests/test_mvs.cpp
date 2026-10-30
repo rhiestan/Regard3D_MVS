@@ -562,6 +562,34 @@ TEST_CASE("remove_weak_depths removes small segments without texture") {
   CHECK_FALSE(map.valid(23, 20));
 }
 
+TEST_CASE("remove_depth_halos removes background-coloured depths beyond an image edge") {
+  // Foreground (grey 50) left of x = 20, plain background (grey 200) right of it.
+  const auto make = [](int valid_end, bool edge) {
+    r3d::DepthMap map;
+    map.allocate(40, 40);
+    for (int y = 0; y < 40; ++y) {
+      for (int x = 0; x < 40; ++x) {
+        map.depth(x, y) = x < valid_end ? 2.0F : 0.0F;
+        for (int c = 0; c < 3; ++c) {
+          map.color(x, y, c) = static_cast<std::uint8_t>(edge && x < 20 ? 50 : 200);
+        }
+      }
+    }
+    return map;
+  };
+  r3d::DepthMap halo = make(26, true);  // depths extend 6 pixels over the background
+  CHECK(r3d::remove_depth_halos(halo, 16, 25) == 6 * 40);
+  CHECK(halo.valid(19, 20));
+  CHECK_FALSE(halo.valid(20, 20));
+  r3d::DepthMap reach = make(26, true);  // the edge (x = 19) is 9 pixels from the first large hole (x = 28)
+  CHECK(r3d::remove_depth_halos(reach, 8, 25) == 0);
+  CHECK(r3d::remove_depth_halos(reach, 9, 25) == 6 * 40);
+  r3d::DepthMap silhouette = make(20, true);  // depths end at the edge
+  CHECK(r3d::remove_depth_halos(silhouette, 16, 25) == 0);
+  r3d::DepthMap plain = make(26, false);  // no edge: a plain surface next to a hole
+  CHECK(r3d::remove_depth_halos(plain, 16, 25) == 0);
+}
+
 TEST_CASE("Visibility filter removes depths behind surfaces and in free space") {
   const MultiRig rig;
   const Plane plane = test_plane(rig.base);

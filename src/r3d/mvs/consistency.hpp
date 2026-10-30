@@ -43,6 +43,16 @@ namespace r3d {
 // segments; 0.001 for scenes with sky or dark background). `reject_weak`
 // removes every weak depth.
 //
+// Halos: the matcher extends a foreground surface over the plain background
+// next to it (edge fattening), and every view does so alike, so the check
+// confirms it. In such a halo the depth border lies outside the image edge:
+// a depth is removed when, in one of 8 directions, only pixels of its own
+// colour (within `halo_colour` per channel) lead to a large hole (an empty
+// 5 x 5 neighbourhood), and in the opposite direction a pixel of another
+// colour (the edge) follows within `halo_px` pixels of that hole. A true
+// silhouette differs in colour from the hole next to it, a plain wall has no
+// edge nearby.
+//
 // Finally, connected segments with fewer than `speckle_size` pixels are
 // removed: most gross errors that survive the check (reflections, glass) are
 // small fragments in regions that are otherwise empty.
@@ -61,6 +71,8 @@ struct ConsistencyOptions {
   double weak_texture = 2.0;      // grey-level deviation (0..255) below which a depth is weak; 0: none
   double weak_segment = 0.0;      // mostly weak segments below this fraction of the pixels are removed; 0: off
   bool reject_weak = false;       // remove all weak depths
+  int halo_px = 32;               // largest distance from a hole to the colour edge of a halo (pixels); 0: off
+  int halo_colour = 25;           // colour difference (per channel, 0..255) of an edge
   int speckle_size = 0;           // pixels; 0: off
   double speckle_step = 0.02;     // relative depth step within a segment
 };
@@ -71,6 +83,7 @@ struct ConsistencyStats {
   std::size_t eroded = 0;     // removed at depth discontinuities
   std::size_t rejected = 0;   // removed for too few agreeing views
   std::size_t weak = 0;       // removed as weak (segments or reject_weak)
+  std::size_t halo = 0;       // removed as halos (edge fattening)
   std::size_t speckles = 0;   // removed as small segments
   std::size_t output = 0;
 };
@@ -102,6 +115,10 @@ std::size_t erode_depth_edges(DepthMap& map, int radius, double discontinuity, b
 // Removes weak depths (see ConsistencyOptions; needs DepthMap::color);
 // returns the number removed.
 std::size_t remove_weak_depths(DepthMap& map, const ConsistencyOptions& options);
+
+// Removes halos (see ConsistencyOptions; needs DepthMap::color); returns
+// the number removed.
+std::size_t remove_depth_halos(DepthMap& map, int max_px, int colour_step);
 
 // Removes connected segments of fewer than `min_size` pixels (4-neighbours
 // whose depths differ by at most `max_relative_step`); returns the number removed.

@@ -369,9 +369,9 @@ void densify(const Scene& scene, const DenseOptions& options, const PointSink& s
   }
   rep.consistency_seconds = watch.elapsed_seconds();
   const ConsistencyStats& cst = rep.consistency;
-  log_info("consistency: {} depths, {} unconfident, {} at discontinuities, {} unconfirmed, {} weak, {} speckles, "
-           "{} kept ({:.1f}%), {:.2f} s",
-           cst.input, cst.unconfident, cst.eroded, cst.rejected, cst.weak, cst.speckles, cst.output,
+  log_info("consistency: {} depths, {} unconfident, {} at discontinuities, {} unconfirmed, {} weak, {} halo, "
+           "{} speckles, {} kept ({:.1f}%), {:.2f} s",
+           cst.input, cst.unconfident, cst.eroded, cst.rejected, cst.weak, cst.halo, cst.speckles, cst.output,
            percent(cst.output, cst.input), rep.consistency_seconds);
 
   // Stage 4: visibility.
