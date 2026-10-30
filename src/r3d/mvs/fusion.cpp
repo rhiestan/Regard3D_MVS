@@ -55,6 +55,31 @@ std::array<std::int64_t, 3> demorton(std::uint64_t key) {
           static_cast<std::int64_t>(compact3(key >> 2))};
 }
 
+// Footprint of a depth pixel (FusionOptions::precision_px).
+float footprint(const DepthMap& m, int x, int y, double inv_f, const FusionOptions& options) {
+  const double gsd = m.depth(x, y) * inv_f;
+  const std::uint16_t mask = m.pair_mask.empty() ? 0 : m.pair_mask(x, y);
+  if (options.precision_px <= 0.0 || mask == 0) {
+    return static_cast<float>(gsd);
+  }
+  const Eigen::Vector3d p = m.point(x, y);
+  const Eigen::Vector3d to_base = (m.camera.pose.center - p).normalized();
+  double cos_widest = 1.0;
+  bool known = false;
+  for (std::size_t i = 0; i < m.partners.size(); ++i) {
+    if ((mask & (1U << i)) != 0 && m.partners[i] < options.view_centres.size()) {
+      cos_widest = std::min(cos_widest, to_base.dot((options.view_centres[m.partners[i]] - p).normalized()));
+      known = true;
+    }
+  }
+  if (!known) {
+    return static_cast<float>(gsd);
+  }
+  const double c = std::clamp(cos_widest, 1e-6, 1.0);
+  const double tan_angle = std::sqrt(std::max(0.0, 1.0 - c * c)) / c;
+  return static_cast<float>(gsd * std::max(1.0, options.precision_px / std::max(tan_angle, 1e-6)));
+}
+
 // One depth pixel, 40 bytes.
 struct Entry {
   std::uint64_t key;                  // Morton code of the finest cell within the chunk
@@ -318,13 +343,12 @@ void fuse_chunk(std::span<Entry> entries, const Grid& grid, const FusionOptions&
 
 }  // namespace
 
-void sample_gsd(const DepthMap& m, std::vector<float>& out) {
-  const auto inv_f = static_cast<float>(1.0 / m.camera.intrinsics.fx);
+void sample_gsd(const DepthMap& m, std::vector<float>& out, const FusionOptions& options) {
+  const double inv_f = 1.0 / m.camera.intrinsics.fx;
   for (int y = 0; y < m.height(); y += 4) {
     for (int x = 0; x < m.width(); x += 4) {
-      const float z = m.depth(x, y);
-      if (z > 0.0F) {
-        out.push_back(z * inv_f);
+      if (m.valid(x, y)) {
+        out.push_back(footprint(m, x, y, inv_f, options));
       }
     }
   }
@@ -520,7 +544,7 @@ void fuse_depth_maps(std::size_t count, const DepthMapSource& source, std::vecto
           const Eigen::Vector3f nrm = depth_map_normal(m, x, y, options.normal_jump);
           e.key = key;
           e.position = {rel.x(), rel.y(), rel.z()};
-          e.gsd = static_cast<float>(m.depth(x, y) * inv_f);
+          e.gsd = footprint(m, x, y, inv_f, options);
           e.view = static_cast<std::uint32_t>(mi);
           for (int a = 0; a < 3; ++a) {
             e.normal[a] = static_cast<std::int16_t>(std::lround(std::clamp(nrm[a], -1.0F, 1.0F) * 32767.0F));

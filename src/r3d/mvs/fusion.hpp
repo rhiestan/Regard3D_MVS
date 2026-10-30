@@ -42,6 +42,12 @@ struct FusionOptions {
   bool fold_neighbourhood = false;  // count the views of the neighbouring leaves as well
   float normal_jump = 0.05F;        // relative depth jump that separates surfaces for normals
   bool with_views = false;          // fill PointCloud::visibility with the depth map indices of each point
+  // > 0: a depth's footprint becomes GSD x max(1, precision_px / tan(widest triangulation angle of its
+  // pairs)), its expected error for a matching error of precision_px pixels; it sets the leaf size,
+  // the weight and the resolution comparison. Needs view_centres (scene view index -> camera centre;
+  // r3d::densify fills them in), otherwise the footprint is the GSD.
+  double precision_px = 0.25;
+  std::vector<Eigen::Vector3d> view_centres;
   std::size_t memory_budget = std::size_t{2} << 30;  // bytes of point data per pass
 };
 
@@ -81,7 +87,7 @@ void fuse_depth_maps(std::size_t count, const DepthMapSource& source, std::vecto
                      FusionStats* stats = nullptr, const FusionProgress& progress = {});
 
 // Appends the GSD of every 4th pixel in both directions.
-void sample_gsd(const DepthMap& map, std::vector<float>& out);
+void sample_gsd(const DepthMap& map, std::vector<float>& out, const FusionOptions& options = {});
 
 // Median ground sample distance (depth / focal length) over a regular sample of the valid pixels.
 [[nodiscard]] double median_gsd(const std::vector<DepthMap>& maps);

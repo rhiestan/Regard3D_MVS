@@ -375,6 +375,13 @@ void densify(const Scene& scene, const DenseOptions& options, const PointSink& s
 
   // Stage 4: visibility.
   watch.restart();
+  FusionOptions fusion_options = options.fusion;
+  if (fusion_options.precision_px > 0.0) {
+    fusion_options.view_centres.clear();
+    for (const SceneView& view : scene.views) {
+      fusion_options.view_centres.push_back(view.pose.center);
+    }
+  }
   std::vector<float> gsd;
   auto final_maps = make_store(nullptr, "final");
   {
@@ -392,7 +399,7 @@ void densify(const Scene& scene, const DenseOptions& options, const PointSink& s
         filter_visibility(map, nb, options.visibility, &rep.visibility);
         progress.report(DenseStage::visibility, v + 1, num_views);
       }
-      sample_gsd(map, gsd);
+      sample_gsd(map, gsd, fusion_options);
       if (options.debug_images) {
         write_png(cache_path(v, "_filtered.png"), colorize_depth(map).view(), 2);
         write_depth_map(cache_path(v, "_filtered.r3dd"), map);
@@ -417,7 +424,7 @@ void densify(const Scene& scene, const DenseOptions& options, const PointSink& s
         throw_if_cancelled();
         return final_maps->get(v);
       },
-      std::move(gsd), rep.origin, options.fusion,
+      std::move(gsd), rep.origin, fusion_options,
       [&](PointCloud&& part) {
         for (std::vector<std::uint32_t>& views : part.visibility) {
           for (std::uint32_t& v : views) {

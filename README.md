@@ -35,6 +35,8 @@ Status: **Phase 8** (library API and Regard3D integration). Done so far:
 - Phase 8: the pipeline as a library function (`r3d::densify`) with progress callbacks and
   cancellation, presets `fast` / `normal` / `high` / `ultra`, and machine-readable progress and clean
   cancellation (Ctrl+C, SIGTERM, Ctrl+Break) for programs that run `r3dmvs` as a child process.
+  Fusion by depth precision (points from small triangulation angles get coarser leaves): ETH3D F1 at 2 cm
+  with `normal`: courtyard 0.82, office 0.68, pipes 0.64, terrains 0.84.
 
 Design and IP decisions are logged in [docs/DECISIONS.md](docs/DECISIONS.md). Using R3DMVS from another
 program, as a library or as a child process: [docs/API.md](docs/API.md).

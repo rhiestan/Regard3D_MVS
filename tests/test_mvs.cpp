@@ -2,6 +2,7 @@
 #include <array>
 #include <cmath>
 #include <filesystem>
+#include <numbers>
 #include <string>
 #include <vector>
 
@@ -688,4 +689,29 @@ TEST_CASE("DepthMapStore keeps maps within the memory budget") {
     CHECK(again.contains(2));
     CHECK(again.get(2)->depth(10, 10) == 3.0F);
   }
+}
+
+TEST_CASE("Footprint from the depth precision") {
+  // One depth 10 units in front of the camera; the partner sees it at 5 or 45 degrees.
+  r3d::DepthMap map;
+  map.camera.intrinsics = {.width = 1, .height = 1, .fx = 100.0, .fy = 100.0, .cx = 0.0, .cy = 0.0};
+  map.allocate(1, 1);
+  map.depth(0, 0) = 10.0F;
+  map.partners = {1};
+  map.pair_mask(0, 0) = 1;
+  r3d::FusionOptions opt;
+  const auto footprint = [&](double angle_deg) {
+    opt.view_centres = {Eigen::Vector3d::Zero(), Eigen::Vector3d(10.0 * std::tan(angle_deg * std::numbers::pi / 180.0), 0.0, 0.0)};
+    std::vector<float> out;
+    r3d::sample_gsd(map, out, opt);
+    REQUIRE(out.size() == 1);
+    return static_cast<double>(out[0]);
+  };
+  opt.precision_px = 0.0;
+  CHECK(footprint(5.0) == doctest::Approx(0.1));  // precision_px 0: the GSD
+  opt.precision_px = 0.25;
+  CHECK(footprint(5.0) == doctest::Approx(0.1 * 0.25 / std::tan(5.0 * std::numbers::pi / 180.0)).epsilon(1e-4));
+  CHECK(footprint(45.0) == doctest::Approx(0.1));  // never below the GSD
+  map.pair_mask(0, 0) = 0;
+  CHECK(footprint(5.0) == doctest::Approx(0.1));  // no pair recorded: the GSD
 }

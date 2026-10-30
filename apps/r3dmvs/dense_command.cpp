@@ -154,6 +154,9 @@ void add_dense_options(CLI::App& command, DenseArgs& args) {
   command.add_option("--resolution-ratio", args.options.fusion.resolution_ratio,
                      "Drop points whose leaf holds points this much finer (0: keep all)")
       ->capture_default_str();
+  command.add_option("--precision-px", args.options.fusion.precision_px,
+                     "Footprint from the depth precision for this matching error in pixels (0: the GSD)")
+      ->capture_default_str();
   command.add_option("--min-sources", args.options.fusion.min_sources, "Views per fused point")->capture_default_str();
   command.add_flag("--fold-neighbourhood,!--fold-leaf", args.options.fusion.fold_neighbourhood,
                    "Count the views of the neighbouring leaves for --min-sources (default: the leaf only)");
