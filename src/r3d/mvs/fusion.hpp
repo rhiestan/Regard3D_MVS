@@ -44,7 +44,7 @@ struct FusionOptions {
   bool with_views = false;          // fill PointCloud::visibility with the depth map indices of each point
   // > 0: a depth's footprint becomes GSD x max(1, precision_px / tan(widest triangulation angle of its
   // pairs)), its expected error for a matching error of precision_px pixels; it sets the leaf size,
-  // the weight and the resolution comparison. Needs view_centres (scene view index -> camera centre;
+  // the weight and the resolution comparison (the output value stays the GSD). Needs view_centres (scene view index -> camera centre;
   // r3d::densify fills them in), otherwise the footprint is the GSD.
   double precision_px = 0.25;
   std::vector<Eigen::Vector3d> view_centres;

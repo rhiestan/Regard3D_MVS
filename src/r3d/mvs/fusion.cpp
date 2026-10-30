@@ -84,11 +84,12 @@ float footprint(const DepthMap& m, int x, int y, double inv_f, const FusionOptio
 struct Entry {
   std::uint64_t key;                  // Morton code of the finest cell within the chunk
   std::array<float, 3> position;      // relative to the fusion origin
-  float gsd;
+  float gsd;                          // footprint (precision_px), sets level, weight and resolution
   std::uint32_t view;                 // index into the depth maps
   std::array<std::int16_t, 3> normal; // unit normal x 32767, zero if unknown
   std::array<std::uint8_t, 3> color;
   std::uint8_t level;
+  std::uint16_t spread;               // footprint / GSD x 64, for the output value (the GSD)
 };
 static_assert(sizeof(Entry) == 40);
 
@@ -269,7 +270,7 @@ void fuse_chunk(std::span<Entry> entries, const Grid& grid, const FusionOptions&
         leaf.normal += wt * Eigen::Vector3d(e.normal[0], e.normal[1], e.normal[2]);
         leaf.color += wt * Eigen::Vector3d(e.color[0], e.color[1], e.color[2]);
         leaf.toward_camera += wt * (centres[e.view] - origin - p).normalized();
-        leaf.gsd_sum += wt * e.gsd;
+        leaf.gsd_sum += wt * e.gsd * 64.0 / e.spread;
         leaf.weight += wt;
         views.push_back(e.view);
       }
@@ -545,6 +546,8 @@ void fuse_depth_maps(std::size_t count, const DepthMapSource& source, std::vecto
           e.key = key;
           e.position = {rel.x(), rel.y(), rel.z()};
           e.gsd = footprint(m, x, y, inv_f, options);
+          e.spread = static_cast<std::uint16_t>(
+              std::clamp(std::lround(64.0 * e.gsd / (m.depth(x, y) * inv_f)), 64L, 65535L));
           e.view = static_cast<std::uint32_t>(mi);
           for (int a = 0; a < 3; ++a) {
             e.normal[a] = static_cast<std::int16_t>(std::lround(std::clamp(nrm[a], -1.0F, 1.0F) * 32767.0F));

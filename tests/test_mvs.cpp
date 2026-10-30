@@ -712,6 +712,11 @@ TEST_CASE("Footprint from the depth precision") {
   opt.precision_px = 0.25;
   CHECK(footprint(5.0) == doctest::Approx(0.1 * 0.25 / std::tan(5.0 * std::numbers::pi / 180.0)).epsilon(1e-4));
   CHECK(footprint(45.0) == doctest::Approx(0.1));  // never below the GSD
+  // The fused point's value stays the GSD (the sample spacing meshers expect).
+  footprint(5.0);
+  const r3d::PointCloud cloud = r3d::fuse_depth_maps({map}, Eigen::Vector3d::Zero(), opt);
+  REQUIRE(cloud.size() == 1);
+  CHECK((*cloud.find_scalar("value"))[0] == doctest::Approx(0.1).epsilon(1e-3));
   map.pair_mask(0, 0) = 0;
   CHECK(footprint(5.0) == doctest::Approx(0.1));  // no pair recorded: the GSD
 }
