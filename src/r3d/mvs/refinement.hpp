@@ -26,7 +26,10 @@ namespace r3d {
 //
 // A refined depth replaces the input only when the mean NCC improved and
 // the depth moved by at most `max_shift_px` in every used view; otherwise
-// the input depth stays. The confidence becomes the mean NCC.
+// the input depth stays. The confidence becomes the mean NCC. With
+// `drop_unconfirmed`, a textured depth that no view confirms (all below
+// `min_ncc` at the input depth) is removed: the images contradict it.
+// Depths without texture (`min_texture`) cannot be checked and stay.
 struct RefinementOptions {
   int radius = 4;              // window half size in pixels
   int step = 2;                // spacing of the window samples (4 / 2: 5x5 samples over 9x9 pixels)
@@ -37,12 +40,14 @@ struct RefinementOptions {
   double min_gain = 0.02;      // mean NCC improvement a refined depth needs
   double min_texture = 1.0;    // standard deviation of the base window (grey levels 0..255)
   double blur_sigma = 0.0;     // Gaussian pre-filter of all images (pixels), see make_refinement_image
+  bool drop_unconfirmed = true;  // remove textured depths that no view confirms
 };
 
 struct RefinementStats {
   std::size_t input = 0;       // valid pixels
   std::size_t refined = 0;     // depth replaced
-  std::size_t kept = 0;        // input depth kept (no texture, no view, no improvement, too far)
+  std::size_t kept = 0;        // input depth kept (no texture, no improvement, too far)
+  std::size_t unconfirmed = 0; // removed: no view confirms the depth (drop_unconfirmed)
 };
 
 // A view's image on its depth-map grid: intensity (0..255) and its x / y

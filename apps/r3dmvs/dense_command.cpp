@@ -100,6 +100,8 @@ void add_dense_options(CLI::App& command, DenseArgs& args) {
       ->capture_default_str();
   command.add_option("--refine-min-gain", args.options.refinement.min_gain, "Mean NCC gain a refined depth needs")
       ->capture_default_str();
+  command.add_flag("--refine-drop-unconfirmed,!--refine-keep-unconfirmed", args.options.refinement.drop_unconfirmed,
+                   "Remove textured depths that no neighbouring image confirms (default)");
   command.add_option("--refine-max-shift", args.options.refinement.max_shift_px,
                      "Largest change of a refined depth (pixels in the used views)")
       ->capture_default_str();
@@ -124,6 +126,14 @@ void add_dense_options(CLI::App& command, DenseArgs& args) {
       ->capture_default_str();
   command.add_flag("--erode-holes,!--no-erode-holes", args.options.consistency.erode_holes,
                    "Erode at the border of regions without depth as well");
+  command.add_option("--weak-texture", args.options.consistency.weak_texture,
+                     "Grey-level deviation (7x7 pixels) below which a depth is weak (0: none)")
+      ->capture_default_str();
+  command.add_option("--weak-segment", args.options.consistency.weak_segment,
+                     "Remove mostly weak depth segments smaller than this fraction of the depth map (0: off; 0.001: sky, dark background)")
+      ->capture_default_str();
+  command.add_flag("--reject-weak", args.options.consistency.reject_weak,
+                   "Remove all weak depths, not only small weak segments (strict: holes on plain walls)");
   command.add_option("--depth-speckle-size", args.options.consistency.speckle_size,
                      "Smallest connected depth segment kept after the consistency check (pixels, 0: off)")
       ->capture_default_str();

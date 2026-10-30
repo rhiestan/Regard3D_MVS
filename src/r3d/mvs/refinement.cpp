@@ -304,9 +304,9 @@ void refine_depth_map(DepthMap& map, const RefinementImage& base, std::span<cons
   const int h = map.height();
   const ImageF32 input = map.depth;  // slopes and validity from the unrefined map
 
-  std::atomic<std::size_t> n_input{0}, n_refined{0};
+  std::atomic<std::size_t> n_input{0}, n_refined{0}, n_unconfirmed{0};
   parallel_for(0, static_cast<std::size_t>(h), 4, [&](std::size_t begin, std::size_t end) {
-    std::size_t c_input = 0, c_refined = 0;
+    std::size_t c_input = 0, c_refined = 0, c_unconfirmed = 0;
     std::array<double, kMaxSamples> n0{};
     std::array<int, kMaxViews> used{};
     for (auto y = static_cast<int>(begin); y < static_cast<int>(end); ++y) {
@@ -359,6 +359,10 @@ void refine_depth_map(DepthMap& map, const RefinementImage& base, std::span<cons
           }
         }
         if (m == 0) {
+          if (options.drop_unconfirmed) {
+            map.depth(x, y) = 0.0F;
+            ++c_unconfirmed;
+          }
           continue;
         }
         s0 /= m;
@@ -436,10 +440,12 @@ void refine_depth_map(DepthMap& map, const RefinementImage& base, std::span<cons
     }
     n_input += c_input;
     n_refined += c_refined;
+    n_unconfirmed += c_unconfirmed;
   });
   st.input = n_input;
   st.refined = n_refined;
-  st.kept = st.input - st.refined;
+  st.unconfirmed = n_unconfirmed;
+  st.kept = st.input - st.refined - st.unconfirmed;
 }
 
 }  // namespace r3d

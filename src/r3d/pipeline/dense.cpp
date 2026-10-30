@@ -318,6 +318,7 @@ void densify(const Scene& scene, const DenseOptions& options, const PointSink& s
           rep.refinement.input += st.input;
           rep.refinement.refined += st.refined;
           rep.refinement.kept += st.kept;
+          rep.refinement.unconfirmed += st.unconfirmed;
           ++count;
           if (options.debug_images) {
             write_png(cache_path(v, "_refined.png"), colorize_depth(map).view(), 2);
@@ -331,9 +332,9 @@ void densify(const Scene& scene, const DenseOptions& options, const PointSink& s
     }
     rep.refinement_seconds = watch.elapsed_seconds();
     if (count > 0) {
-      log_info("refinement: {} depths, {} refined ({:.1f}%), images {:.1f} s, {:.1f} s", rep.refinement.input,
-               rep.refinement.refined, percent(rep.refinement.refined, rep.refinement.input), images.load_seconds(),
-               rep.refinement_seconds);
+      log_info("refinement: {} depths, {} refined ({:.1f}%), {} unconfirmed, images {:.1f} s, {:.1f} s",
+               rep.refinement.input, rep.refinement.refined, percent(rep.refinement.refined, rep.refinement.input),
+               rep.refinement.unconfirmed, images.load_seconds(), rep.refinement_seconds);
     }
   }
   raw.reset();
@@ -368,9 +369,9 @@ void densify(const Scene& scene, const DenseOptions& options, const PointSink& s
   }
   rep.consistency_seconds = watch.elapsed_seconds();
   const ConsistencyStats& cst = rep.consistency;
-  log_info("consistency: {} depths, {} unconfident, {} at discontinuities, {} unconfirmed, {} speckles, "
+  log_info("consistency: {} depths, {} unconfident, {} at discontinuities, {} unconfirmed, {} weak, {} speckles, "
            "{} kept ({:.1f}%), {:.2f} s",
-           cst.input, cst.unconfident, cst.eroded, cst.rejected, cst.speckles, cst.output,
+           cst.input, cst.unconfident, cst.eroded, cst.rejected, cst.weak, cst.speckles, cst.output,
            percent(cst.output, cst.input), rep.consistency_seconds);
 
   // Stage 4: visibility.

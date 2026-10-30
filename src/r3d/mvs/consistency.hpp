@@ -30,10 +30,22 @@ namespace r3d {
 // With `average_depths`, every kept depth is replaced by the mean of its own
 // depth and the depths of the agreeing neighbours along the same ray.
 //
-// Finally, connected segments (4-neighbours, relative depth steps up to
-// `speckle_step`) with fewer than `speckle_size` pixels are removed: most
-// gross errors that survive the check (reflections, glass) are small
-// fragments in regions that are otherwise empty.
+// A kept depth is weak when its image window (7 x 7 pixels of
+// DepthMap::color) has a grey-level standard deviation below `weak_texture`:
+// the matcher guessed it (sky, dark shadows) or interpolated it (plain
+// walls), and agreeing pairs and views do not make it better, as the
+// coarse-to-fine search gives all of them the range of the nearest surface.
+// Interpolated walls form large segments together with their textured
+// surroundings, guesses form small islands: connected segments
+// (4-neighbours, relative depth steps up to `speckle_step`) smaller than
+// `weak_segment` x the map's pixels are removed when at least half of their
+// depths are weak (off by default: plain indoor walls also break into small
+// segments; 0.001 for scenes with sky or dark background). `reject_weak`
+// removes every weak depth.
+//
+// Finally, connected segments with fewer than `speckle_size` pixels are
+// removed: most gross errors that survive the check (reflections, glass) are
+// small fragments in regions that are otherwise empty.
 struct ConsistencyOptions {
   double max_relative_depth_error = 0.01;
   double max_reprojection_px = 2.0;
@@ -46,6 +58,9 @@ struct ConsistencyOptions {
   int max_neighbours = 8;
   bool independent_support = false;
   bool average_depths = true;
+  double weak_texture = 2.0;      // grey-level deviation (0..255) below which a depth is weak; 0: none
+  double weak_segment = 0.0;      // mostly weak segments below this fraction of the pixels are removed; 0: off
+  bool reject_weak = false;       // remove all weak depths
   int speckle_size = 0;           // pixels; 0: off
   double speckle_step = 0.02;     // relative depth step within a segment
 };
@@ -55,6 +70,7 @@ struct ConsistencyStats {
   std::size_t unconfident = 0; // removed for low matcher confidence
   std::size_t eroded = 0;     // removed at depth discontinuities
   std::size_t rejected = 0;   // removed for too few agreeing views
+  std::size_t weak = 0;       // removed as weak (segments or reject_weak)
   std::size_t speckles = 0;   // removed as small segments
   std::size_t output = 0;
 };
@@ -82,6 +98,10 @@ void filter_depth_maps(std::vector<DepthMap>& maps, const std::vector<std::vecto
 // Removes pixels at depth discontinuities (see ConsistencyOptions), and with
 // `holes` also at the border of invalid regions; returns the number removed.
 std::size_t erode_depth_edges(DepthMap& map, int radius, double discontinuity, bool holes = false);
+
+// Removes weak depths (see ConsistencyOptions; needs DepthMap::color);
+// returns the number removed.
+std::size_t remove_weak_depths(DepthMap& map, const ConsistencyOptions& options);
 
 // Removes connected segments of fewer than `min_size` pixels (4-neighbours
 // whose depths differ by at most `max_relative_step`); returns the number removed.

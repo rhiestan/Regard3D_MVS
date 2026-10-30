@@ -484,7 +484,7 @@ TEST_CASE("Refinement fits slanted planes from stair-stepped depths") {
     CHECK(after < before / 5.0);
     CHECK(map.confidence(80, 60) > 0.9F);
   }
-  SUBCASE("unrelated images keep the input") {
+  SUBCASE("unrelated images: unconfirmed depths are removed, or kept") {
     std::vector<r3d::RefinementImage> wrong;
     for (const r3d::Pose& p : rig.partners) {
       const r3d::PinholeCamera cam{rig.cam.pinhole(), p};
@@ -493,9 +493,16 @@ TEST_CASE("Refinement fits slanted planes from stair-stepped depths") {
     const std::vector<const r3d::RefinementImage*> wrong_views{&wrong[0], &wrong[1], &wrong[2]};
     r3d::RefinementOptions opt;
     opt.min_ncc = 0.5;
+    r3d::DepthMap dropped = map;
     r3d::RefinementStats st;
-    r3d::refine_depth_map(map, images[0], wrong_views, opt, &st);
+    r3d::refine_depth_map(dropped, images[0], wrong_views, opt, &st);
     CHECK(st.refined < st.input / 20);
+    CHECK(st.unconfirmed > st.input / 2);
+    CHECK(dropped.num_valid() == st.input - st.unconfirmed);
+    opt.drop_unconfirmed = false;
+    r3d::RefinementStats kept;
+    r3d::refine_depth_map(map, images[0], wrong_views, opt, &kept);
+    CHECK(kept.unconfirmed == 0);
     CHECK(relative_depth_rms(map, truth, border) < before * 1.2);
   }
 }
@@ -519,6 +526,40 @@ TEST_CASE("remove_depth_speckles removes small segments") {
   CHECK(map.valid(11, 11));
   CHECK(map.num_valid() == 400 - 9);
   CHECK(r3d::remove_depth_speckles(map, 10, 0.02) == 0);
+}
+
+TEST_CASE("remove_weak_depths removes small segments without texture") {
+  // Left half textured (2x2 black and white cells), right half plain grey; one plane at depth 2
+  // with a 5x5 island at depth 5 in the plain half (a guess in the sky).
+  r3d::DepthMap map;
+  map.allocate(40, 40);
+  map.depth.fill(2.0F);
+  for (int y = 0; y < 40; ++y) {
+    for (int x = 0; x < 40; ++x) {
+      const std::uint8_t g = x >= 20 ? 128 : (((x / 2) + (y / 2)) % 2 == 0 ? 0 : 255);
+      for (int c = 0; c < 3; ++c) {
+        map.color(x, y, c) = g;
+      }
+    }
+  }
+  for (int y = 5; y < 10; ++y) {
+    for (int x = 30; x < 35; ++x) {
+      map.depth(x, y) = 5.0F;
+    }
+  }
+  r3d::ConsistencyOptions opt;
+  opt.weak_segment = 0.05;  // 80 pixels
+  r3d::DepthMap segments = map;
+  CHECK(r3d::remove_weak_depths(segments, opt) == 25);  // the plain wall stays: it joins the textured half
+  CHECK_FALSE(segments.valid(32, 7));
+  CHECK(segments.valid(32, 20));
+  opt.weak_texture = 0.0;
+  CHECK(r3d::remove_weak_depths(map, opt) == 0);
+  opt.weak_texture = 4.0;
+  opt.reject_weak = true;
+  CHECK(r3d::remove_weak_depths(map, opt) == 17 * 40);  // every pixel whose 7x7 window is plain
+  CHECK(map.valid(22, 20));
+  CHECK_FALSE(map.valid(23, 20));
 }
 
 TEST_CASE("Visibility filter removes depths behind surfaces and in free space") {

@@ -36,7 +36,9 @@ Status: **Phase 8** (library API and Regard3D integration). Done so far:
   cancellation, presets `fast` / `normal` / `high` / `ultra`, and machine-readable progress and clean
   cancellation (Ctrl+C, SIGTERM, Ctrl+Break) for programs that run `r3dmvs` as a child process.
   Fusion by depth precision (points from small triangulation angles get coarser leaves): ETH3D F1 at 2 cm
-  with `normal`: courtyard 0.82, office 0.68, pipes 0.64, terrains 0.84.
+  with `normal`: courtyard 0.82, office 0.68, pipes 0.64, terrains 0.84. Depths that no other image
+  confirms are removed; `--weak-segment 0.001` also removes small islands without texture (sky, dark
+  background), `--reject-weak` every depth without texture (D51).
 
 Design and IP decisions are logged in [docs/DECISIONS.md](docs/DECISIONS.md). Using R3DMVS from another
 program, as a library or as a child process: [docs/API.md](docs/API.md).
