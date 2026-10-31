@@ -70,13 +70,13 @@ colours, and the scalars `value` (point footprint) and `confidence` (fused depth
 |---|---|---|---|
 | `fast` | 1600 px | off | 0.61-0.81, 35-115 s (previews) |
 | `normal` | 3200 px | on | 0.64-0.84, 95-360 s (default) |
-| `high` | 6400 px | on | 0.60-0.81, 530-1840 s |
-| `ultra` | full image size | on | same as `high` on ETH3D |
+| `high` | 6400 px | off | 0.61-0.82, 460-1850 s |
+| `ultra` | full image size | off | same as `high` on ETH3D |
 
-On ETH3D, depth maps larger than `normal`'s are slower and not more accurate (`high` measured before the
-precision-based fusion, D50).
+On ETH3D, depth maps larger than `normal`'s are slower and score lower at 2 cm (D53). `high` and `ultra`
+skip the refinement, which gains nothing at that size; set `options.refine = true` (`--refine`) to keep it.
 
-Measured quality and run times on ETH3D are in `docs/DECISIONS.md` (D46). Every preset is a complete
+Measured quality and run times on ETH3D are in `docs/DECISIONS.md` (D46, D53). Every preset is a complete
 `DenseOptions`; single fields can be changed afterwards. `depth.max_image_size` limits the depth map
 size whatever the image size (0: no limit), `depth.resolution` scales relative to the image.
 

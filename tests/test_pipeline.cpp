@@ -121,6 +121,11 @@ TEST_CASE("Dense presets") {
   CHECK(size(r3d::DensePreset::fast) < size(r3d::DensePreset::normal));
   CHECK(size(r3d::DensePreset::normal) < size(r3d::DensePreset::high));
   CHECK(size(r3d::DensePreset::high) <= size(r3d::DensePreset::ultra));
+  // Only `normal` refines (D53).
+  CHECK_FALSE(r3d::dense_preset(r3d::DensePreset::fast).refine);
+  CHECK(r3d::dense_preset(r3d::DensePreset::normal).refine);
+  CHECK_FALSE(r3d::dense_preset(r3d::DensePreset::high).refine);
+  CHECK_FALSE(r3d::dense_preset(r3d::DensePreset::ultra).refine);
 }
 
 TEST_CASE("depth_map_resolution limits the longer side") {

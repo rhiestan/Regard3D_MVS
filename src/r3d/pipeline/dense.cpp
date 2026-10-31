@@ -175,9 +175,11 @@ DenseOptions dense_preset(DensePreset preset) {
       break;
     case DensePreset::high:
       o.depth.max_image_size = 6400;
+      o.refine = false;
       break;
     case DensePreset::ultra:
       o.depth.max_image_size = 0;
+      o.refine = false;
       break;
   }
   return o;
