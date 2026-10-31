@@ -20,7 +20,7 @@ jobs:
           - { os: ubuntu-24.04, preset: gcc-release }
           - { os: ubuntu-24.04, preset: clang-release }
           - { os: ubuntu-24.04, preset: clang-asan }
-          - { os: macos-14, preset: macos-release }
+          - { os: macos-15, preset: macos-release }
 
     steps:
       - uses: actions/checkout@v4
