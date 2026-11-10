@@ -231,6 +231,15 @@ double depth_map_resolution(const Scene& scene, std::size_t view, const DepthMap
   return std::min(options.resolution, static_cast<double>(options.max_image_size) / std::max(longer, 1));
 }
 
+bool stereo_pair_usable(const Scene& scene, std::size_t view, std::size_t partner, const DepthRange& depth,
+                        const DepthMapOptions& options) {
+  RectificationOptions rect_options = options.rectification;
+  rect_options.resolution = depth_map_resolution(scene, view, options);
+  return compute_rectification(scene.camera_of(view), scene.views[view].pose, scene.camera_of(partner),
+                               scene.views[partner].pose, depth, rect_options)
+      .valid;
+}
+
 DepthMap compute_depth_map(const Scene& scene, const ViewSelection& selection, std::size_t view,
                            const DepthMapOptions& options, DepthMapStats* stats) {
   DepthMapStats local;

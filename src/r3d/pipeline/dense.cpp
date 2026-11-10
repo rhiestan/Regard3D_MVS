@@ -234,7 +234,19 @@ void densify(const Scene& scene, const DenseOptions& options, const PointSink& s
   rep.views = num_views;
   ViewSelectionOptions select_options;
   select_options.max_partners = options.depth.max_pairs;
+  // Pairs that cannot be rectified (forward motion) are replaced by the next best partner.
+  select_options.usable = [&](std::size_t view, std::size_t partner, const DepthRange& depth) {
+    return stereo_pair_usable(scene, view, partner, depth, options.depth);
+  };
   const ViewSelection selection = select_views(scene, select_options);
+  std::size_t unusable_pairs = 0;
+  std::size_t short_views = 0;
+  for (std::size_t v = 0; v < num_views; ++v) {
+    unusable_pairs += static_cast<std::size_t>(selection.unusable[v]);
+    short_views += selection.partners[v].size() < static_cast<std::size_t>(std::max(options.depth.max_pairs, 0)) ? 1 : 0;
+  }
+  log_info("stereo pairs: {} candidates that cannot be rectified passed over; {} of {} views have fewer than {} partners",
+           unusable_pairs, short_views, num_views, options.depth.max_pairs);
 
   const std::filesystem::path& work_dir = options.work_dir;
   if (!work_dir.empty()) {

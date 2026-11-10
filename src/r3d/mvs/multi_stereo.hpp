@@ -66,6 +66,13 @@ struct DepthMapStats {
   std::uint64_t cells = 0;        // aggregated SGM cells
 };
 
+// Whether the pair of `view` and `partner` can be rectified and matched with
+// these options (depth: range of the scene in the camera of `view`). For
+// ViewSelectionOptions::usable, so that the selection passes over pairs
+// compute_depth_map would skip.
+[[nodiscard]] bool stereo_pair_usable(const Scene& scene, std::size_t view, std::size_t partner, const DepthRange& depth,
+                                      const DepthMapOptions& options = {});
+
 // Rectifies and matches `view` with its best partners (ViewSelection) and
 // combines the pairs into a coloured depth map.
 [[nodiscard]] DepthMap compute_depth_map(const Scene& scene, const ViewSelection& selection, std::size_t view,

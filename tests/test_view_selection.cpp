@@ -174,6 +174,51 @@ TEST_CASE("Forward motion is flagged") {
   CHECK(selection.partners[0][0].epipole_in_image);
 }
 
+TEST_CASE("Unusable partners are replaced by the next best ones") {
+  const r3d::Scene scene = ring_scene();
+  r3d::ViewSelectionOptions options;
+  options.max_partners = 2;
+  const r3d::ViewSelection plain = r3d::select_views(scene, options);
+  REQUIRE(plain.partners[5].size() == 2);
+  REQUIRE(plain.unusable.size() == scene.views.size());
+  CHECK(plain.unusable[5] == 0);
+
+  // Reject the best partner of view 5: the others move up and a new one joins.
+  const std::uint32_t rejected = plain.partners[5][0].view;
+  int calls = 0;
+  options.usable = [&](std::size_t base, std::size_t partner, const r3d::DepthRange& depth) {
+    ++calls;
+    CHECK(depth.valid());
+    return base != 5 || partner != rejected;
+  };
+  const r3d::ViewSelection selection = r3d::select_views(scene, options);
+  CHECK(calls > 0);
+  REQUIRE(selection.partners[5].size() == 2);
+  CHECK(selection.unusable[5] == 1);
+  for (const r3d::StereoPartner& p : selection.partners[5]) {
+    CHECK(p.view != rejected);
+    CHECK(p.depth.valid());
+  }
+  // Other views are not affected.
+  for (std::size_t v = 0; v < scene.views.size(); ++v) {
+    if (v == 5) {
+      continue;
+    }
+    REQUIRE(selection.partners[v].size() == plain.partners[v].size());
+    for (std::size_t k = 0; k < plain.partners[v].size(); ++k) {
+      CHECK(selection.partners[v][k].view == plain.partners[v][k].view);
+      CHECK(selection.partners[v][k].depth.min == plain.partners[v][k].depth.min);
+      CHECK(selection.partners[v][k].depth.max == plain.partners[v][k].depth.max);
+    }
+  }
+
+  // Nothing usable: no partners, every candidate counted.
+  options.usable = [](std::size_t, std::size_t, const r3d::DepthRange&) { return false; };
+  const r3d::ViewSelection none = r3d::select_views(scene, options);
+  CHECK(none.partners[5].empty());
+  CHECK(none.unusable[5] >= 2);
+}
+
 TEST_CASE("Sparse cloud and camera frustum export") {
   const r3d::Scene scene = ring_scene();
   const r3d::PointCloud cloud = r3d::sparse_point_cloud(scene, false);

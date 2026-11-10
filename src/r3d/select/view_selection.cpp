@@ -149,21 +149,23 @@ ViewSelection select_views(const Scene& scene, const ViewSelectionOptions& optio
   ViewSelection result;
   result.partners.resize(num_views);
   result.view_depth.resize(num_views);
+  result.unusable.assign(num_views, 0);
   for (std::size_t v = 0; v < num_views; ++v) {
     result.view_depth[v] = robust_range(view_depths[v], options);
   }
 
-  // Scoring and greedy selection with a spread of baseline directions.
+  // Scoring: the candidates of every base view, sorted by view.
+  struct Candidate {
+    StereoPartner partner;
+    double direction = 0.0;  // of the baseline in the base image plane
+  };
   const double log_max_ratio = std::log(std::max(options.max_scale_ratio, 1.0));
+  std::vector<std::vector<Candidate>> all_candidates(num_views);
   for (std::size_t base = 0; base < num_views; ++base) {
     const SceneView& bv = scene.views[base];
     const PinholeIntrinsics k = scene.camera_of(base).pinhole();
     const int base_cells = std::popcount(view_cells[base]);
-    struct Candidate {
-      StereoPartner partner;
-      double direction = 0.0;  // of the baseline in the base image plane
-    };
-    std::vector<Candidate> candidates;
+    std::vector<Candidate>& candidates = all_candidates[base];
     for (const auto& [other, acc] : accum[base]) {
       if (acc.shared < static_cast<std::uint32_t>(options.min_shared_points) || acc.weight <= 0.0 || base_cells == 0) {
         continue;
@@ -194,7 +196,45 @@ ViewSelection select_views(const Scene& scene, const ViewSelectionOptions& optio
       best = std::max(best, c.partner.score);
     }
     std::erase_if(candidates, [&](const Candidate& c) { return c.partner.score < options.min_relative_score * best; });
+  }
+  accum.clear();
 
+  // Pass 2: depth ranges of the points shared with each candidate.
+  {
+    std::vector<std::vector<std::vector<double>>> pair_depths(num_views);
+    for (std::size_t v = 0; v < num_views; ++v) {
+      pair_depths[v].resize(all_candidates[v].size());
+    }
+    for (std::size_t i = 0; i < scene.num_points(); ++i) {
+      const auto track = scene.track(i);
+      for (const TrackObservation& a : track) {
+        const std::vector<Candidate>& candidates = all_candidates[a.view];
+        if (candidates.empty()) {
+          continue;
+        }
+        const double depth = scene.views[a.view].pose.world_to_camera(scene.points[i]).z();
+        if (!(depth > 0.0)) {
+          continue;
+        }
+        for (const TrackObservation& b : track) {
+          const auto it = std::lower_bound(candidates.begin(), candidates.end(), b.view,
+                                           [](const Candidate& c, std::uint32_t view) { return c.partner.view < view; });
+          if (it != candidates.end() && it->partner.view == b.view) {
+            pair_depths[a.view][static_cast<std::size_t>(it - candidates.begin())].push_back(depth);
+          }
+        }
+      }
+    }
+    for (std::size_t v = 0; v < num_views; ++v) {
+      for (std::size_t p = 0; p < all_candidates[v].size(); ++p) {
+        all_candidates[v][p].partner.depth = robust_range(pair_depths[v][p], options);
+      }
+    }
+  }
+
+  // Greedy selection with a spread of baseline directions.
+  for (std::size_t base = 0; base < num_views; ++base) {
+    std::vector<Candidate>& candidates = all_candidates[base];
     std::vector<double> chosen_directions;
     while (static_cast<int>(result.partners[base].size()) < options.max_partners && !candidates.empty()) {
       std::size_t pick = 0;
@@ -210,43 +250,15 @@ ViewSelection select_views(const Scene& scene, const ViewSelectionOptions& optio
           pick = i;
         }
       }
-      chosen_directions.push_back(candidates[pick].direction);
-      result.partners[base].push_back(candidates[pick].partner);
+      const StereoPartner& partner = candidates[pick].partner;
+      if (options.usable &&
+          !options.usable(base, partner.view, partner.depth.valid() ? partner.depth : result.view_depth[base])) {
+        ++result.unusable[base];
+      } else {
+        chosen_directions.push_back(candidates[pick].direction);
+        result.partners[base].push_back(partner);
+      }
       candidates.erase(candidates.begin() + static_cast<std::ptrdiff_t>(pick));
-    }
-  }
-
-  // Pass 2: depth ranges of the points shared with the selected partners.
-  std::vector<std::vector<std::vector<double>>> pair_depths(num_views);
-  for (std::size_t v = 0; v < num_views; ++v) {
-    pair_depths[v].resize(result.partners[v].size());
-  }
-  for (std::size_t i = 0; i < scene.num_points(); ++i) {
-    const auto track = scene.track(i);
-    for (const TrackObservation& a : track) {
-      const std::vector<StereoPartner>& partners = result.partners[a.view];
-      if (partners.empty()) {
-        continue;
-      }
-      double depth = -1.0;
-      for (const TrackObservation& b : track) {
-        for (std::size_t p = 0; p < partners.size(); ++p) {
-          if (partners[p].view != b.view) {
-            continue;
-          }
-          if (depth < 0.0) {
-            depth = scene.views[a.view].pose.world_to_camera(scene.points[i]).z();
-          }
-          if (depth > 0.0) {
-            pair_depths[a.view][p].push_back(depth);
-          }
-        }
-      }
-    }
-  }
-  for (std::size_t v = 0; v < num_views; ++v) {
-    for (std::size_t p = 0; p < result.partners[v].size(); ++p) {
-      result.partners[v][p].depth = robust_range(pair_depths[v][p], options);
     }
   }
   return result;

@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <utility>
 #include <vector>
 
@@ -13,6 +14,12 @@ namespace r3d {
 // combining Goesele et al. 2007 (per-point angle and scale weights, spread of
 // baseline directions) and Wenzel et al. 2014 (Gaussian angle weight around
 // preferred intersection angles).
+struct DepthRange {
+  double min = 0.0;
+  double max = 0.0;
+  [[nodiscard]] bool valid() const noexcept { return max > min && min > 0.0; }
+};
+
 struct ViewSelectionOptions {
   int max_partners = 4;            // per base view
   int min_shared_points = 15;      // pairs sharing fewer points are not considered
@@ -25,12 +32,12 @@ struct ViewSelectionOptions {
   int coverage_grid = 8;           // coverage cells per image side (at most 8: 64-bit mask)
   double depth_percentile = 0.01;  // robust depth range: [p, 1 - p] percentiles ...
   double depth_margin = 0.1;       // ... widened by this relative margin
-};
-
-struct DepthRange {
-  double min = 0.0;
-  double max = 0.0;
-  [[nodiscard]] bool valid() const noexcept { return max > min && min > 0.0; }
+  // Optional test of a candidate pair (base view, partner view, depth range of
+  // their shared points in the base camera, or of the base view when they share
+  // too few). A candidate that fails is passed over and the next best one takes
+  // its place, so a view keeps max_partners partners where the matcher cannot
+  // use a pair (e.g. forward motion, which cannot be rectified).
+  std::function<bool(std::size_t, std::size_t, const DepthRange&)> usable;
 };
 
 struct StereoPartner {
@@ -47,6 +54,7 @@ struct StereoPartner {
 struct ViewSelection {
   std::vector<std::vector<StereoPartner>> partners;  // per base view, best first
   std::vector<DepthRange> view_depth;                // of all points seen by a view
+  std::vector<int> unusable;                         // per base view: candidates passed over (options.usable)
 
   // Unordered pairs (a < b) appearing in any partner list, sorted.
   [[nodiscard]] std::vector<std::pair<std::uint32_t, std::uint32_t>> stereo_pairs() const;
