@@ -102,7 +102,8 @@ r3d::Scene read_scene(const SceneArgs& args) {
     options.image_dir = utf8_path(args.image_dir);
     r3d::ColmapImportReport report;
     r3d::Scene scene = r3d::read_colmap_scene(input, options, &report);
-    std::printf("COLMAP model, read in %.3f s\n", watch.elapsed_seconds());
+    std::printf("COLMAP %s model %s, read in %.3f s\n", report.binary ? "binary" : "text",
+                report.model_dir.string().c_str(), watch.elapsed_seconds());
     std::printf("  views:        %zu of %zu (%zu with unsupported camera)\n", scene.views.size(), report.num_images,
                 report.num_images_unsupported);
     std::printf("  points:       %zu (%zu dropped), %zu observations\n", scene.num_points(), report.num_points_dropped,
