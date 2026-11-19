@@ -1,0 +1,177 @@
+name: Release
+
+# Pushing a tag vX.Y.Z (matching the project VERSION in CMakeLists.txt) builds,
+# tests and packages r3dmvs for Windows x64 (clang-cl), Linux x64 (built on
+# Ubuntu 22.04) and macOS arm64, and creates a draft GitHub release with the
+# packages. Running the workflow manually builds the packages as workflow
+# artifacts only.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2022
+            platform: windows-x64
+            preset: clang-cl-release
+            # Static C/C++ runtime: no Visual C++ redistributable needed.
+            cmake_args: -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded -DCMAKE_POLICY_DEFAULT_CMP0091=NEW
+          - os: ubuntu-24.04
+            container: ubuntu:22.04
+            platform: linux-x64
+            preset: gcc-release
+            # GCC 13 (for <format>) with its C++ runtime linked statically, so the
+            # binary only needs the glibc 2.35 of Ubuntu 22.04 or newer.
+            cmake_args: >-
+              -DCMAKE_C_COMPILER=gcc-13 -DCMAKE_CXX_COMPILER=g++-13
+              "-DCMAKE_EXE_LINKER_FLAGS=-static-libstdc++ -static-libgcc"
+          - os: macos-15
+            platform: macos-arm64
+            preset: macos-release
+            cmake_args: -DCMAKE_OSX_ARCHITECTURES=arm64
+
+    env:
+      DEBIAN_FRONTEND: noninteractive
+
+    steps:
+      - name: Install toolchain (Ubuntu 22.04 container)
+        if: runner.os == 'Linux'
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates git python3-pip software-properties-common gpg-agent
+          add-apt-repository -y ppa:ubuntu-toolchain-r/test
+          apt-get install -y --no-install-recommends gcc-13 g++-13
+          pip3 install "cmake>=3.25,<4" ninja
+
+      - uses: actions/checkout@v4
+
+      - name: Install Ninja (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ninja
+
+      - name: Install Ninja (Windows)
+        if: runner.os == 'Windows'
+        run: choco install ninja -y --no-progress
+
+      - name: MSVC developer environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Version
+        id: version
+        shell: bash
+        run: |
+          version=$(sed -n 's/^  VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
+          test -n "$version"
+          if [[ "$GITHUB_REF" == refs/tags/* && "$GITHUB_REF_NAME" != "v$version" ]]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match the project version $version in CMakeLists.txt"
+            exit 1
+          fi
+          test -f LICENSE || { echo "::error::LICENSE file missing"; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "package=r3dmvs-$version-${{ matrix.platform }}" >> "$GITHUB_OUTPUT"
+          cmake --version
+          ninja --version
+
+      - name: Configure
+        shell: bash
+        run: cmake --preset ${{ matrix.preset }} -DR3D_BUILD_BENCH=OFF -DR3D_BUILD_EXAMPLES=OFF ${{ matrix.cmake_args }}
+
+      - name: Build
+        run: cmake --build --preset ${{ matrix.preset }}
+
+      - name: Test
+        run: ctest --preset ${{ matrix.preset }}
+
+      - name: Check binary dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          dir=build/${{ matrix.preset }}/apps
+          case "${{ runner.os }}" in
+            Windows)
+              dumpbin //nologo //dependents $dir/r3dmvs.exe | tee deps.txt
+              if grep -i -E 'msvcp|vcruntime|api-ms-win-crt|ucrtbase' deps.txt; then
+                echo "::error::r3dmvs.exe depends on the Visual C++ runtime"; exit 1
+              fi ;;
+            Linux)
+              ldd $dir/r3dmvs | tee deps.txt
+              if grep -E 'libstdc\+\+|libgcc_s' deps.txt; then
+                echo "::error::r3dmvs depends on libstdc++ / libgcc_s"; exit 1
+              fi
+              echo "Newest glibc symbol version: $(objdump -T $dir/r3dmvs | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1)" ;;
+            macOS)
+              otool -L $dir/r3dmvs
+              test "$(lipo -archs $dir/r3dmvs)" = arm64
+              otool -l $dir/r3dmvs | grep -A3 LC_BUILD_VERSION ;;
+          esac
+          $dir/r3dmvs --version
+          $dir/r3dmvs info
+
+      - name: Package
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          pkg=${{ steps.version.outputs.package }}
+          deps=build/${{ matrix.preset }}/_deps
+          mkdir -p dist/$pkg/third_party_licenses
+          cp build/${{ matrix.preset }}/apps/r3dmvs${{ runner.os == 'Windows' && '.exe' || '' }} dist/$pkg/
+          cp LICENSE README.md dist/$pkg/
+          cp packaging/THIRD_PARTY_NOTICES.txt dist/$pkg/third_party_licenses/
+          cp $deps/r3d_eigen-src/COPYING.MPL2 dist/$pkg/third_party_licenses/Eigen-MPL-2.0.txt
+          cp $deps/r3d_highway-src/LICENSE dist/$pkg/third_party_licenses/Highway-Apache-2.0.txt
+          cp $deps/r3d_highway-src/LICENSE-BSD3 dist/$pkg/third_party_licenses/Highway-BSD-3-Clause.txt
+          cp $deps/r3d_json-src/LICENSE.MIT dist/$pkg/third_party_licenses/nlohmann-json-MIT.txt
+          cp $deps/r3d_cli11-src/LICENSE dist/$pkg/third_party_licenses/CLI11-BSD-3-Clause.txt
+          cp $deps/r3d_stb-src/LICENSE dist/$pkg/third_party_licenses/stb-MIT-or-public-domain.txt
+          cd dist
+          if [ "${{ runner.os }}" = Windows ]; then
+            7z a -tzip $pkg.zip $pkg > /dev/null
+            echo "file=dist/$pkg.zip" >> "$GITHUB_OUTPUT"
+          else
+            tar -czf $pkg.tar.gz $pkg
+            echo "file=dist/$pkg.tar.gz" >> "$GITHUB_OUTPUT"
+          fi
+          ls -l
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.version.outputs.package }}
+          path: ${{ steps.package.outputs.file }}
+          if-no-files-found: error
+
+  release:
+    name: Draft release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: packages
+          merge-multiple: true
+
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd packages
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+          gh release create "$GITHUB_REF_NAME" * --repo "$GITHUB_REPOSITORY" --draft \
+            --title "R3DMVS ${GITHUB_REF_NAME#v}" --generate-notes

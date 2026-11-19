@@ -74,6 +74,16 @@ r3dmvs stereo path/to/MiddEval3/trainingH
 Images are looked up under `root_path`, then next to the `sfm_data` file; `--image-dir` overrides both.
 Matcher throughput is measured with `bench_stereo` ([bench/README.md](bench/README.md)).
 
+## Binary releases
+
+Prebuilt `r3dmvs` command line programs are attached to the GitHub releases: Windows x64, Linux x64
+(Ubuntu 22.04 or any distribution with glibc 2.35 or newer) and macOS on Apple Silicon (macOS 13.3 or
+newer). They need no installation. The macOS program is not notarized; after downloading it with a browser,
+remove the quarantine flag with `xattr -d com.apple.quarantine r3dmvs`.
+
+Releases are built by `.github/workflows/release.yml` when a tag `vX.Y.Z` matching the version in
+`CMakeLists.txt` is pushed; it creates a draft release with the packages.
+
 ## Building
 
 Requirements: CMake ≥ 3.25, Ninja, and a C++20 compiler with `<format>`:

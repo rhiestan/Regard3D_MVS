@@ -1,0 +1,23 @@
+R3DMVS third-party notices
+==========================
+
+The r3dmvs program contains code from the following libraries. Their license
+texts are in this folder.
+
+Eigen 3.4.0 - MPL-2.0 (Eigen-MPL-2.0.txt)
+  Built with EIGEN_MPL2_ONLY: no LGPL-licensed parts of Eigen are used.
+  Source code: https://gitlab.com/libeigen/eigen/-/archive/3.4.0/eigen-3.4.0.tar.gz
+
+Google Highway 1.2.0 - Apache-2.0 or BSD-3-Clause
+  (Highway-Apache-2.0.txt, Highway-BSD-3-Clause.txt)
+  Source code: https://github.com/google/highway/archive/refs/tags/1.2.0.tar.gz
+
+nlohmann/json 3.11.3 - MIT (nlohmann-json-MIT.txt)
+  Copyright (c) 2013-2023 Niels Lohmann
+  Source code: https://github.com/nlohmann/json
+
+CLI11 2.4.2 - BSD-3-Clause (CLI11-BSD-3-Clause.txt)
+  Source code: https://github.com/CLIUtils/CLI11
+
+stb_image, stb_image_write - MIT or public domain (stb-MIT-or-public-domain.txt)
+  Source code: https://github.com/nothings/stb (commit 2c980bb59875b0d32144a71867fbdebb2f77cd20)
