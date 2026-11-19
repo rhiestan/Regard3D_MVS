@@ -23,10 +23,10 @@ with `--tools` (it is searched recursively), or put the programs on `PATH`.
 
 ```sh
 # Poisson (default): dense cloud, octree depth from the point footprint, trimmed, textured
-python tools/r3d_mesh.py sfm_data.bin --out-dir out --tools <external_tools> -- --resolution 0.5 --voxel-factor 2
+python tools/r3d_mesh.py project --out-dir out --tools <external_tools> -- --resolution 0.5 --voxel-factor 2
 
 # FSSR, from an existing cloud
-python tools/r3d_mesh.py sfm_data.bin --out-dir out --tools <external_tools> --mesher fssr --cloud cloud.ply
+python tools/r3d_mesh.py project --out-dir out --tools <external_tools> --mesher fssr --cloud cloud.ply
 ```
 
 Results in `out/`: `cloud.ply`, `<mesher>_in.ply`, `<mesher>_raw.ply`,
@@ -54,11 +54,11 @@ Defaults, tested on ETH3D (docs/DECISIONS.md, D42):
 The same steps by hand (without the zero-area face removal):
 
 ```sh
-r3dmvs dense sfm_data.bin -o cloud.ply --resolution 0.5 --voxel-factor 2
+r3dmvs dense project -o cloud.ply --resolution 0.5 --voxel-factor 2
 r3dmvs export --cloud cloud.ply --for poisson -o poisson_in.ply
 PoissonRecon --in poisson_in.ply --out poisson_raw.ply --depth 11 --density --confidence --color 16
 SurfaceTrimmer --in poisson_raw.ply --out mesh.ply --trim 10
-r3dmvs export sfm_data.bin --texrecon-dir texrecon
+r3dmvs export project --texrecon-dir texrecon
 texrecon texrecon mesh.ply textured
 ```
 

@@ -31,18 +31,6 @@ if(NOT TARGET Eigen3::Eigen)
   add_library(Eigen3::Eigen ALIAS r3d_eigen_headers)
 endif()
 
-# --- nlohmann/json 3.11.3 (MIT) ---------------------------------------------
-if(R3D_USE_SYSTEM_DEPS)
-  find_package(nlohmann_json 3.11 CONFIG QUIET)
-endif()
-if(NOT TARGET nlohmann_json::nlohmann_json)
-  r3d_fetch_header_only(r3d_json
-    https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz
-    d6c65aca6b1ed68e7a182f4757257b107ae403032760ed6ef121c9d55e81757d
-    "include" r3d_json_headers)
-  add_library(nlohmann_json::nlohmann_json ALIAS r3d_json_headers)
-endif()
-
 # --- CLI11 2.4.2 (BSD-3-Clause) ----------------------------------------------
 if(R3D_USE_SYSTEM_DEPS)
   find_package(CLI11 2.4 CONFIG QUIET)

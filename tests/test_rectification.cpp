@@ -67,7 +67,7 @@ TEST_CASE("Rectified cameras have aligned rows and the documented disparity") {
   for (const double side : {1.0, -1.0}) {
     for (const CameraModel model : {CameraModel::pinhole, CameraModel::radial_k3, CameraModel::brown_t2}) {
       CAPTURE(side);
-      CAPTURE(r3d::openmvg_camera_model_name(model));
+      CAPTURE(r3d::camera_model_name(model));
       const StereoRig r = rig(model, side);
       const r3d::DepthRange depth{2.0, 10.0};
       const r3d::RectifiedPair pair =
@@ -127,7 +127,7 @@ TEST_CASE("Forward motion and zero baseline are rejected") {
 
 TEST_CASE("rectify_image moves image content to its rectified position") {
   for (const CameraModel model : {CameraModel::pinhole, CameraModel::radial_k3, CameraModel::brown_t2}) {
-    CAPTURE(r3d::openmvg_camera_model_name(model));
+    CAPTURE(r3d::camera_model_name(model));
     const StereoRig r = rig(model);
     const r3d::RectifiedPair pair =
         r3d::compute_rectification(r.left_cam, r.left_pose, r.right_cam, r.right_pose, r3d::DepthRange{2.0, 10.0});

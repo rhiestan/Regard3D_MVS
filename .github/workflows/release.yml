@@ -134,7 +134,6 @@ jobs:
           cp $deps/r3d_eigen-src/COPYING.MPL2 dist/$pkg/third_party_licenses/Eigen-MPL-2.0.txt
           cp $deps/r3d_highway-src/LICENSE dist/$pkg/third_party_licenses/Highway-Apache-2.0.txt
           cp $deps/r3d_highway-src/LICENSE-BSD3 dist/$pkg/third_party_licenses/Highway-BSD-3-Clause.txt
-          cp $deps/r3d_json-src/LICENSE.MIT dist/$pkg/third_party_licenses/nlohmann-json-MIT.txt
           cp $deps/r3d_cli11-src/LICENSE dist/$pkg/third_party_licenses/CLI11-BSD-3-Clause.txt
           cp $deps/r3d_stb-src/LICENSE dist/$pkg/third_party_licenses/stb-MIT-or-public-domain.txt
           cd dist

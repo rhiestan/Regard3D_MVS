@@ -22,7 +22,7 @@ The parent needs C++20 (`<format>`, see the README for compiler versions).
 copy, with the same alignment settings, in the library and in the program: two copies in one binary
 corrupt the objects passed between them. If the parent project defines the target `Eigen3::Eigen`
 before `add_subdirectory`, the library uses it; otherwise `-DR3D_USE_SYSTEM_DEPS=ON` finds an installed
-Eigen 3.4, and without either Eigen 3.4.0 is downloaded. Highway, nlohmann/json and stb are private
+Eigen 3.4, and without either Eigen 3.4.0 is downloaded. Highway and stb are private
 dependencies and never appear in the headers. `EIGEN_MPL2_ONLY` is set for the library's own sources
 only.
 
@@ -31,16 +31,18 @@ only.
 ## Reading a scene
 
 ```cpp
-#include "r3d/io/openmvg_scene.hpp"   // OpenMVG sfm_data.json / .bin
-#include "r3d/io/colmap_scene.hpp"    // COLMAP text model directory
+#include "r3d/io/colmap_scene.hpp"    // COLMAP sparse model, binary or text
 
-r3d::OpenMvgReadOptions read;
-read.image_dir = "path/to/images";    // optional: overrides the sfm_data root_path
-const r3d::Scene scene = r3d::read_openmvg_scene("sfm_data.bin", read);
+r3d::ColmapReadOptions read;
+read.image_dir = "path/to/images";    // optional: the directory the image names are relative to
+const r3d::Scene scene = r3d::read_colmap_scene("path/to/project", read);  // or .../sparse/0
 ```
 
-Only views with a pose and a supported camera model are kept; `OpenMvgImportReport` (third argument)
-says how many were dropped. `r3d::Scene` can also be filled directly (cameras, views with image paths
+The path is the model directory or a project directory with the model in `sparse/0` or `sparse`. Binary
+files (`cameras.bin`, `images.bin`, `points3D.bin`) are read if present, otherwise the `.txt` files. Only
+images of a supported camera model are kept; `ColmapImportReport` (third argument) says how many were
+dropped and which directory and format were read. OpenMVG scenes are converted with
+`openMVG_main_openMVG2Colmap -i sfm_data.bin -o project/sparse -f bin`. `r3d::Scene` can also be filled directly (cameras, views with image paths
 and poses, sparse points with their observations, which the pair selection uses).
 
 ## Running the pipeline
@@ -136,7 +138,7 @@ each one has its own memory budgets. The pool's threads are separate from OpenMP
 ## Running `r3dmvs` as a child process
 
 ```sh
-r3dmvs dense sfm_data.bin --image-dir images --preset normal --work-dir work --progress -o dense.ply
+r3dmvs dense project/sparse --image-dir images --preset normal --work-dir work --progress -o dense.ply
 ```
 
 * `--progress` prints one line per step on stdout, flushed:

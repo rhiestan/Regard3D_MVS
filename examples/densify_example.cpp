@@ -1,7 +1,7 @@
-// Minimal use of the R3DMVS library: an OpenMVG scene to a dense cloud for
+// Minimal use of the R3DMVS library: a COLMAP sparse model to a dense cloud for
 // PoissonRecon, with a preset, progress output and cancellation.
 //
-//   densify_example sfm_data.bin cloud.ply [fast|normal|high|ultra]
+//   densify_example project/sparse/0 cloud.ply [fast|normal|high|ultra]
 
 #include <cstddef>
 #include <cstdio>
@@ -9,16 +9,16 @@
 #include <string>
 
 #include "r3d/core/log.hpp"
-#include "r3d/io/openmvg_scene.hpp"
+#include "r3d/io/colmap_scene.hpp"
 #include "r3d/pipeline/dense.hpp"
 
 int main(int argc, char** argv) {
   if (argc < 3) {
-    std::fprintf(stderr, "usage: densify_example sfm_data.bin cloud.ply [preset]\n");
+    std::fprintf(stderr, "usage: densify_example colmap_model_dir cloud.ply [preset]\n");
     return 2;
   }
   try {
-    const r3d::Scene scene = r3d::read_openmvg_scene(argv[1]);
+    const r3d::Scene scene = r3d::read_colmap_scene(argv[1]);
 
     // A preset, then single options changed as needed.
     r3d::DenseOptions options = r3d::dense_preset(r3d::parse_dense_preset(argc > 3 ? argv[3] : "normal")

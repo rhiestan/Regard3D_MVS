@@ -5,8 +5,8 @@
                      [--mesher poisson|fssr] [--cloud CLOUD.ply] [--no-texture]
                      [-- DENSE OPTIONS]
 
-SCENE is what r3dmvs reads (OpenMVG sfm_data, or a COLMAP text model
-directory). Without --cloud, "r3dmvs dense" runs first; arguments after "--"
+SCENE is what r3dmvs reads (a COLMAP model directory, or a project
+directory with the model in sparse/0 or sparse). Without --cloud, "r3dmvs dense" runs first; arguments after "--"
 go to it (e.g. -- --resolution 0.5). The external programs (PoissonRecon,
 SurfaceTrimmer, fssrecon, meshclean, texrecon) are looked up in --tools
 (searched recursively, e.g. Regard3D's external_tools folder), then on PATH.

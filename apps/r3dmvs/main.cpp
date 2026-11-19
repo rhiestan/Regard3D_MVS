@@ -19,7 +19,6 @@
 #include "r3d/core/timer.hpp"
 #include "r3d/io/colmap_scene.hpp"
 #include "r3d/io/image_io.hpp"
-#include "r3d/io/openmvg_scene.hpp"
 #include "r3d/io/ply.hpp"
 #include "r3d/io/pfm.hpp"
 #include "r3d/io/scene_export.hpp"
@@ -93,31 +92,18 @@ void print_pairs(const r3d::Scene& scene, const r3d::ViewSelection& selection) {
   std::printf("  %zu stereo pairs\n", selection.stereo_pairs().size());
 }
 
-// OpenMVG sfm_data file, or a directory with a COLMAP text model.
+// COLMAP sparse model (binary or text): the model directory or a project
+// directory with sparse/0 or sparse.
 r3d::Scene read_scene(const SceneArgs& args) {
-  const std::filesystem::path input = utf8_path(args.input);
   const r3d::Stopwatch watch;
-  if (std::filesystem::is_directory(input)) {
-    r3d::ColmapReadOptions options;
-    options.image_dir = utf8_path(args.image_dir);
-    r3d::ColmapImportReport report;
-    r3d::Scene scene = r3d::read_colmap_scene(input, options, &report);
-    std::printf("COLMAP %s model %s, read in %.3f s\n", report.binary ? "binary" : "text",
-                report.model_dir.string().c_str(), watch.elapsed_seconds());
-    std::printf("  views:        %zu of %zu (%zu with unsupported camera)\n", scene.views.size(), report.num_images,
-                report.num_images_unsupported);
-    std::printf("  points:       %zu (%zu dropped), %zu observations\n", scene.num_points(), report.num_points_dropped,
-                scene.observations.size());
-    return scene;
-  }
-  r3d::OpenMvgReadOptions options;
+  r3d::ColmapReadOptions options;
   options.image_dir = utf8_path(args.image_dir);
-  r3d::OpenMvgImportReport report;
-  r3d::Scene scene = r3d::read_openmvg_scene(input, options, &report);
-  std::printf("sfm_data %s, root_path '%s', read in %.3f s\n", report.version.c_str(), report.root_path.c_str(),
-              watch.elapsed_seconds());
-  std::printf("  views:        %zu calibrated of %zu (%zu without pose, %zu unsupported)\n", scene.views.size(),
-              report.num_views, report.num_views_without_pose, report.num_views_unsupported);
+  r3d::ColmapImportReport report;
+  r3d::Scene scene = r3d::read_colmap_scene(utf8_path(args.input), options, &report);
+  std::printf("COLMAP %s model %s, read in %.3f s\n", report.binary ? "binary" : "text",
+              report.model_dir.string().c_str(), watch.elapsed_seconds());
+  std::printf("  views:        %zu of %zu (%zu with unsupported camera)\n", scene.views.size(), report.num_images,
+              report.num_images_unsupported);
   std::printf("  points:       %zu (%zu dropped), %zu observations\n", scene.num_points(), report.num_points_dropped,
               scene.observations.size());
   return scene;
@@ -129,7 +115,7 @@ void run_scene(const SceneArgs& args) {
   for (std::size_t i = 0; i < scene.cameras.size(); ++i) {
     const r3d::CameraIntrinsics& cam = scene.cameras[i];
     std::printf("  camera %zu:     %s %dx%d f=%.2f c=(%.2f, %.2f)", i,
-                std::string(r3d::openmvg_camera_model_name(cam.model)).c_str(), cam.width, cam.height, cam.fx, cam.cx,
+                std::string(r3d::camera_model_name(cam.model)).c_str(), cam.width, cam.height, cam.fx, cam.cx,
                 cam.cy);
     for (int k = 0; k < r3d::distortion_parameter_count(cam.model); ++k) {
       std::printf(" %.6g", cam.params[static_cast<std::size_t>(k)]);
@@ -321,7 +307,7 @@ void run_pair(const PairArgs& args) {
 }  // namespace
 
 int main(int argc, char** argv) {
-  CLI::App app{"R3DMVS - multi-view stereo densification for OpenMVG scenes"};
+  CLI::App app{"R3DMVS - multi-view stereo densification of COLMAP sparse models"};
   app.set_version_flag("--version", r3d::kVersionString);
   app.require_subcommand(1);
 
@@ -334,9 +320,9 @@ int main(int argc, char** argv) {
   CLI::App* info = app.add_subcommand("info", "Print build and system information");
 
   SceneArgs scene_args;
-  CLI::App* scene = app.add_subcommand("scene", "Read an OpenMVG scene (or COLMAP text model directory), select stereo pairs, export for inspection");
-  scene->add_option("input", scene_args.input, "sfm_data.json, sfm_data.bin or a COLMAP model directory")->required();
-  scene->add_option("--image-dir", scene_args.image_dir, "Directory with the images (default: from the scene)");
+  CLI::App* scene = app.add_subcommand("scene", "Read a COLMAP model, select stereo pairs, export for inspection");
+  scene->add_option("input", scene_args.input, "COLMAP model directory or project directory with sparse/0")->required();
+  scene->add_option("--image-dir", scene_args.image_dir, "Directory the image names are relative to (default: images next to the model)");
   scene->add_flag("--pairs", scene_args.pairs, "Print the selected stereo partners of every view");
   scene->add_option("--max-partners", scene_args.max_partners, "Stereo partners per view")->check(CLI::Range(1, 32));
   scene->add_option("--sparse-ply", scene_args.sparse_ply, "Write the sparse points to a PLY file");
@@ -350,8 +336,8 @@ int main(int argc, char** argv) {
 
   PairArgs pair_args;
   CLI::App* pair = app.add_subcommand("pair", "Rectify and match stereo pairs of a scene, export disparity and points");
-  pair->add_option("input", pair_args.input, "sfm_data.json, sfm_data.bin or a COLMAP model directory")->required();
-  pair->add_option("--image-dir", pair_args.image_dir, "Directory with the images (default: from the scene)");
+  pair->add_option("input", pair_args.input, "COLMAP model directory or project directory with sparse/0")->required();
+  pair->add_option("--image-dir", pair_args.image_dir, "Directory the image names are relative to (default: images next to the model)");
   pair->add_option("--base", pair_args.base, "Base view id (default: the first view)");
   pair->add_option("--partner", pair_args.partner, "Partner view id (default: the best partner of the base view)");
   pair->add_flag("--all", pair_args.all, "Every view with its best partner");
@@ -365,8 +351,8 @@ int main(int argc, char** argv) {
   dense_args.options = r3d::dense_preset(r3dmvs::preset_from_args(argc, argv));
   dense_args.preset = r3d::to_string(r3dmvs::preset_from_args(argc, argv));
   CLI::App* dense = app.add_subcommand("dense", "Compute the dense point cloud of a scene");
-  dense->add_option("input", dense_scene.input, "sfm_data.json, sfm_data.bin or a COLMAP model directory")->required();
-  dense->add_option("--image-dir", dense_scene.image_dir, "Directory with the images (default: from the scene)");
+  dense->add_option("input", dense_scene.input, "COLMAP model directory or project directory with sparse/0")->required();
+  dense->add_option("--image-dir", dense_scene.image_dir, "Directory the image names are relative to (default: images next to the model)");
   r3dmvs::add_dense_options(*dense, dense_args);
 
   SceneArgs export_scene;
@@ -374,8 +360,8 @@ int main(int argc, char** argv) {
   CLI::App* export_cmd =
       app.add_subcommand("export", "Write a dense cloud for PoissonRecon / FSSR, and the scene for texrecon");
   export_cmd->add_option("input", export_scene.input,
-                         "sfm_data.json, sfm_data.bin or a COLMAP model directory (for --texrecon-dir)");
-  export_cmd->add_option("--image-dir", export_scene.image_dir, "Directory with the images (default: from the scene)");
+                         "COLMAP model directory or project directory with sparse/0 (for --texrecon-dir)");
+  export_cmd->add_option("--image-dir", export_scene.image_dir, "Directory the image names are relative to (default: images next to the model)");
   r3dmvs::add_export_options(*export_cmd, export_args);
 
   try {

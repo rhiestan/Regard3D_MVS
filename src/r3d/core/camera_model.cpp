@@ -16,13 +16,12 @@ struct ModelInfo {
   int num_params;
 };
 
-constexpr std::array<ModelInfo, 6> kModels{{
+constexpr std::array<ModelInfo, 5> kModels{{
     {CameraModel::pinhole, "pinhole", 0},
-    {CameraModel::radial_k1, "pinhole_radial_k1", 1},
-    {CameraModel::radial_k3, "pinhole_radial_k3", 3},
-    {CameraModel::brown_t2, "pinhole_brown_t2", 5},
+    {CameraModel::radial_k1, "radial_k1", 1},
+    {CameraModel::radial_k3, "radial_k3", 3},
+    {CameraModel::brown_t2, "brown_t2", 5},
     {CameraModel::fisheye, "fisheye", 4},
-    {CameraModel::spherical, "spherical", 0},
 }};
 
 const ModelInfo& info(CameraModel model) {
@@ -51,16 +50,7 @@ Eigen::Matrix2d distortion_jacobian(const CameraIntrinsics& cam, const Eigen::Ve
 
 }  // namespace
 
-std::string_view openmvg_camera_model_name(CameraModel model) noexcept { return info(model).name; }
-
-std::optional<CameraModel> parse_openmvg_camera_model(std::string_view name) noexcept {
-  for (const ModelInfo& m : kModels) {
-    if (m.name == name) {
-      return m.model;
-    }
-  }
-  return std::nullopt;
-}
+std::string_view camera_model_name(CameraModel model) noexcept { return info(model).name; }
 
 int distortion_parameter_count(CameraModel model) noexcept { return info(model).num_params; }
 
@@ -79,7 +69,6 @@ Eigen::Vector2d CameraIntrinsics::distort(const Eigen::Vector2d& u) const {
   const double r2 = u.squaredNorm();
   switch (model) {
     case CameraModel::pinhole:
-    case CameraModel::spherical:
       return u;
     case CameraModel::radial_k1:
       return u * (1.0 + params[0] * r2);
@@ -157,9 +146,6 @@ Eigen::Vector2d CameraIntrinsics::distort_pixel(const Eigen::Vector2d& pixel) co
 }
 
 Eigen::Vector2d CameraIntrinsics::project(const Eigen::Vector3d& x_cam) const {
-  if (!is_perspective()) {
-    throw_error("project: camera model '{}' is not perspective", openmvg_camera_model_name(model));
-  }
   const Eigen::Vector2d d = distort(x_cam.head<2>() / x_cam.z());
   return {fx * d.x() + cx, fy * d.y() + cy};
 }

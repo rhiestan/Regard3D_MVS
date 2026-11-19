@@ -421,8 +421,14 @@ std::optional<CameraIntrinsics> convert_camera(const RawCamera& raw) {
     cam.params = {p[4], p[5], p[6], p[7]};
   } else if (model == "FULL_OPENCV" && expect(12) && p[9] == 0.0 && p[10] == 0.0 && p[11] == 0.0) {
     set_k(p[0], p[1], p[2], p[3]);
-    cam.model = CameraModel::brown_t2;
-    cam.params = {p[4], p[5], p[8], p[6], p[7]};
+    if (p[6] == 0.0 && p[7] == 0.0) {
+      // No tangential terms: OpenMVG's pinhole_radial_k3, as written by openMVG2Colmap.
+      cam.model = CameraModel::radial_k3;
+      cam.params = {p[4], p[5], p[8]};
+    } else {
+      cam.model = CameraModel::brown_t2;
+      cam.params = {p[4], p[5], p[8], p[6], p[7]};
+    }
   } else {
     return std::nullopt;
   }

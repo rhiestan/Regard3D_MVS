@@ -12,10 +12,6 @@ Google Highway 1.2.0 - Apache-2.0 or BSD-3-Clause
   (Highway-Apache-2.0.txt, Highway-BSD-3-Clause.txt)
   Source code: https://github.com/google/highway/archive/refs/tags/1.2.0.tar.gz
 
-nlohmann/json 3.11.3 - MIT (nlohmann-json-MIT.txt)
-  Copyright (c) 2013-2023 Niels Lohmann
-  Source code: https://github.com/nlohmann/json
-
 CLI11 2.4.2 - BSD-3-Clause (CLI11-BSD-3-Clause.txt)
   Source code: https://github.com/CLIUtils/CLI11
 

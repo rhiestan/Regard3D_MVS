@@ -12,7 +12,6 @@ add_library(r3d STATIC
   r3d/io/colmap_scene.cpp
   r3d/io/image_io.cpp
   r3d/io/mesher_export.cpp
-  r3d/io/openmvg_scene.cpp
   r3d/io/pfm.cpp
   r3d/io/ply.cpp
   r3d/io/scene_export.cpp
@@ -46,7 +45,7 @@ target_include_directories(r3d PUBLIC
 # compiled against the same copy. Highway is used in the sources only.
 target_link_libraries(r3d
   PUBLIC Eigen3::Eigen
-  PRIVATE hwy::hwy r3d_stb_headers nlohmann_json::nlohmann_json)
+  PRIVATE hwy::hwy r3d_stb_headers)
 
 find_package(Threads REQUIRED)
 target_link_libraries(r3d PUBLIC Threads::Threads)

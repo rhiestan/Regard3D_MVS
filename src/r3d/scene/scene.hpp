@@ -15,7 +15,7 @@ namespace r3d {
 
 // One calibrated image of the scene.
 struct SceneView {
-  std::uint32_t source_id = 0;        // id in the source (OpenMVG id_view, COLMAP image_id)
+  std::uint32_t source_id = 0;        // COLMAP image_id
   std::filesystem::path image_path;   // resolved path of the original (distorted) image
   int width = 0;
   int height = 0;

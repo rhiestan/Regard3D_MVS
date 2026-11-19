@@ -9,7 +9,6 @@ add_executable(r3d_tests
   test_image_io.cpp
   test_mesher_export.cpp
   test_mvs.cpp
-  test_openmvg_scene.cpp
   test_pipeline.cpp
   test_ply.cpp
   test_pyramid.cpp
@@ -19,10 +18,10 @@ add_executable(r3d_tests
   test_undistort.cpp
   test_view_selection.cpp
 )
-target_link_libraries(r3d_tests PRIVATE R3D::r3d doctest::doctest nlohmann_json::nlohmann_json)
+target_link_libraries(r3d_tests PRIVATE R3D::r3d doctest::doctest)
 r3d_set_target_options(r3d_tests)
 
-# Optional real scenes (not in the repository): <dir>/<scene>/sfm_data.bin + images.
+# Optional real scenes (not in the repository): <dir>/<scene>/sparse (COLMAP model) + images.
 set(R3D_TESTDATA_DIR "${PROJECT_SOURCE_DIR}/../testdata" CACHE PATH "Directory with optional test scenes")
 if(IS_DIRECTORY "${R3D_TESTDATA_DIR}")
   cmake_path(ABSOLUTE_PATH R3D_TESTDATA_DIR NORMALIZE OUTPUT_VARIABLE _r3d_testdata)

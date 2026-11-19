@@ -81,7 +81,7 @@ constexpr Reference kReference[] = {
 
 TEST_CASE("Camera models match OpenMVG distortion") {
   for (const Reference& ref : kReference) {
-    CAPTURE(r3d::openmvg_camera_model_name(ref.model));
+    CAPTURE(r3d::camera_model_name(ref.model));
     CAPTURE(ref.pixel[0]);
     CAPTURE(ref.pixel[1]);
     const CameraIntrinsics cam = make_camera(ref.model);
@@ -106,7 +106,7 @@ TEST_CASE("Camera models match OpenMVG distortion") {
 TEST_CASE("Undistortion inverts distortion over the whole image") {
   for (const CameraModel model :
        {CameraModel::radial_k1, CameraModel::radial_k3, CameraModel::brown_t2, CameraModel::fisheye}) {
-    CAPTURE(r3d::openmvg_camera_model_name(model));
+    CAPTURE(r3d::camera_model_name(model));
     const CameraIntrinsics cam = make_camera(model);
     double max_error = 0.0;
     for (int y = -50; y <= cam.height + 50; y += 37) {
@@ -121,11 +121,8 @@ TEST_CASE("Undistortion inverts distortion over the whole image") {
 }
 
 TEST_CASE("Camera model names and projection") {
-  for (const CameraModel model : {CameraModel::pinhole, CameraModel::radial_k1, CameraModel::radial_k3,
-                                  CameraModel::brown_t2, CameraModel::fisheye, CameraModel::spherical}) {
-    CHECK(r3d::parse_openmvg_camera_model(r3d::openmvg_camera_model_name(model)) == model);
-  }
-  CHECK_FALSE(r3d::parse_openmvg_camera_model("pinhole_radial_k2").has_value());
+  CHECK(r3d::camera_model_name(CameraModel::radial_k3) == "radial_k3");
+  CHECK(r3d::camera_model_name(CameraModel::fisheye) == "fisheye");
   CHECK(r3d::distortion_parameter_count(CameraModel::brown_t2) == 5);
 
   const CameraIntrinsics cam = make_camera(CameraModel::radial_k3);
@@ -136,9 +133,4 @@ TEST_CASE("Camera model names and projection") {
   const Eigen::Vector2d expected = cam.distort_pixel(cam.pinhole().project(x_cam));
   R3D_CHECK_NEAR(projected.x(), expected.x(), 1e-9);
   R3D_CHECK_NEAR(projected.y(), expected.y(), 1e-9);
-
-  CameraIntrinsics sphere;
-  sphere.model = CameraModel::spherical;
-  CHECK_FALSE(sphere.is_perspective());
-  CHECK_THROWS_AS(static_cast<void>(sphere.project(x_cam)), r3d::Error);
 }

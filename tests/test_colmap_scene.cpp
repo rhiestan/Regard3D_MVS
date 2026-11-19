@@ -323,3 +323,48 @@ TEST_CASE("COLMAP reader resolves images and reports errors") {
   r3d::write_file(bin / "cameras.bin", cameras);
   CHECK_THROWS_AS(static_cast<void>(r3d::read_colmap_scene(bin, options)), r3d::IoError);
 }
+
+TEST_CASE("COLMAP FULL_OPENCV without tangential terms is radial_k3") {
+  const r3d::test::TempDir dir;
+  {
+    std::ofstream f(dir.path() / "cameras.txt");
+    f << "1 FULL_OPENCV 640 480 700 700 320 240 -0.1 0.02 0 0 0.003 0 0 0\n";
+    f << "2 FULL_OPENCV 640 480 700 700 320 240 -0.1 0.02 0.001 -0.002 0.003 0 0 0\n";
+    std::ofstream(dir.path() / "images.txt") << "# no images\n";
+    std::ofstream(dir.path() / "points3D.txt") << "# no points\n";
+  }
+  r3d::ColmapImportReport report;
+  const r3d::Scene scene = r3d::read_colmap_scene(dir.path(), {}, &report);
+  REQUIRE(scene.cameras.size() == 2);
+  CHECK(scene.cameras[0].model == r3d::CameraModel::radial_k3);
+  CHECK(scene.cameras[0].params[0] == -0.1);
+  CHECK(scene.cameras[0].params[1] == 0.02);
+  CHECK(scene.cameras[0].params[2] == 0.003);
+  CHECK(scene.cameras[1].model == r3d::CameraModel::brown_t2);
+  CHECK(scene.cameras[1].params[3] == 0.001);
+  CHECK(scene.cameras[1].params[4] == -0.002);
+}
+
+#if defined(R3D_TESTDATA_DIR)
+TEST_CASE("COLMAP test scenes from Regard3D") {
+  // Converted from Regard3D's sfm_data.bin with openMVG_main_openMVG2Colmap -f bin;
+  // the images are in the scene directory, above the model.
+  const fs::path root = fs::path(R3D_TESTDATA_DIR);
+  for (const char* name : {"kermit", "sceaux_castle", "luzern_loewe"}) {
+    const fs::path model = root / name / "sparse";
+    if (!fs::exists(model / "cameras.bin")) {
+      MESSAGE("skipped, not found: ", model.string());
+      continue;
+    }
+    CAPTURE(name);
+    r3d::ColmapImportReport report;
+    const r3d::Scene scene = r3d::read_colmap_scene(root / name, {}, &report);
+    CHECK(report.binary);
+    CHECK(scene.views.size() == report.num_images);
+    CHECK(scene.num_points() == report.num_points);
+    const r3d::ReprojectionStats stats = r3d::compute_reprojection_stats(scene);
+    CHECK(stats.num_behind_camera == 0);
+    CHECK(stats.rms < 1.0);
+  }
+}
+#endif

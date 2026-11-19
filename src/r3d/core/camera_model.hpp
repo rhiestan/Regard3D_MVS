@@ -1,7 +1,6 @@
 #pragma once
 
 #include <array>
-#include <optional>
 #include <string_view>
 
 #include <Eigen/Core>
@@ -10,20 +9,18 @@
 
 namespace r3d {
 
-// Camera models of OpenMVG (names as in sfm_data). COLMAP models are mapped
-// onto these by the COLMAP importer.
+// Perspective camera models. The COLMAP reader maps COLMAP's models onto
+// these; the formulas are those of OpenMVG (DECISIONS.md D13).
 enum class CameraModel {
   pinhole,
   radial_k1,  // k1
   radial_k3,  // k1, k2, k3
   brown_t2,   // k1, k2, k3, t1, t2 (t1, t2 = OpenCV p1, p2)
   fisheye,    // k1..k4, equidistant: theta_d = theta (1 + k1 theta^2 + ... + k4 theta^8)
-  spherical,  // equirectangular panorama; read but not usable for dense matching
 };
 
-// OpenMVG's registered polymorphic name, e.g. "pinhole_radial_k3".
-[[nodiscard]] std::string_view openmvg_camera_model_name(CameraModel model) noexcept;
-[[nodiscard]] std::optional<CameraModel> parse_openmvg_camera_model(std::string_view name) noexcept;
+// Name of the model for messages, e.g. "radial_k3".
+[[nodiscard]] std::string_view camera_model_name(CameraModel model) noexcept;
 // Number of distortion parameters stored in CameraIntrinsics::params.
 [[nodiscard]] int distortion_parameter_count(CameraModel model) noexcept;
 
@@ -42,10 +39,9 @@ struct CameraIntrinsics {
   double cy = 0.0;
   std::array<double, 5> params{};  // see CameraModel for the order
 
-  [[nodiscard]] bool is_perspective() const noexcept { return model != CameraModel::spherical; }
   [[nodiscard]] bool has_distortion() const noexcept;
 
-  // Lens distortion in normalised coordinates (OpenMVG add_disto / remove_disto).
+  // Lens distortion in normalised coordinates.
   [[nodiscard]] Eigen::Vector2d distort(const Eigen::Vector2d& u) const;
   // Inverse of distort(), by damped Newton iteration; accurate to ~1e-12.
   [[nodiscard]] Eigen::Vector2d undistort(const Eigen::Vector2d& d) const;

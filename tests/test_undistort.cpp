@@ -60,7 +60,7 @@ r3d::ImageF32 render_distorted(const CameraIntrinsics& cam, const PinholeIntrins
 
 TEST_CASE("Undistorted camera covers the source image as requested") {
   for (const CameraIntrinsics& cam : {barrel_camera(), brown_camera()}) {
-    CAPTURE(r3d::openmvg_camera_model_name(cam.model));
+    CAPTURE(r3d::camera_model_name(cam.model));
     REQUIRE(r3d::distortion_is_monotonic(cam));
 
     const PinholeIntrinsics same = r3d::undistorted_camera(cam, fit(r3d::UndistortFit::same_size));
@@ -102,7 +102,7 @@ TEST_CASE("Undistorted camera covers the source image as requested") {
 
 TEST_CASE("Undistortion moves features to their pinhole positions (< 0.05 px)") {
   for (const CameraIntrinsics& cam : {barrel_camera(), brown_camera()}) {
-    CAPTURE(r3d::openmvg_camera_model_name(cam.model));
+    CAPTURE(r3d::camera_model_name(cam.model));
     const PinholeIntrinsics target = r3d::undistorted_camera(cam, fit(r3d::UndistortFit::inner));
 
     // Gaussian blobs (sigma 1.5 px in the undistorted image) on a grid.

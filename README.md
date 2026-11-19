@@ -1,13 +1,13 @@
 # R3DMVS
 
-Multi-view stereo densification for [OpenMVG](https://github.com/openMVG/openMVG) scenes, developed for
-[Regard3D](https://www.regard3d.org). It takes an OpenMVG scene (`sfm_data.bin` or `.json`) and produces a dense, oriented,
-scale-annotated point cloud, which is meant to be meshed and textured with external tools (PoissonRecon,
+Multi-view stereo densification of structure-from-motion results, developed for
+[Regard3D](https://www.regard3d.org). It takes a [COLMAP](https://colmap.github.io/format.html) sparse model
+(binary or text) and produces a dense, oriented, scale-annotated point cloud, which is meant to be meshed and textured with external tools (PoissonRecon,
 FSSR, texrecon).
 
 Status: **Phase 8** (library API and Regard3D integration). Done so far:
 
-- Phase 1: OpenMVG `sfm_data.json` / `.bin` and COLMAP text import, OpenMVG camera models, undistortion,
+- Phase 1: scene import, camera models with lens distortion, undistortion,
   image pyramids, stereo pair selection, PLY exports for visual checks.
 - Phase 2: calibrated rectification, 9x7 Census, 8-path SGM over the full disparity range with tiling,
   sub-pixel disparities, left-right check and filters (SIMD kernels bit-exact with scalar), Middlebury
@@ -41,37 +41,44 @@ Status: **Phase 8** (library API and Regard3D integration). Done so far:
   it); `--weak-segment 0.001` also removes small islands without texture (sky, dark background),
   `--reject-weak` every depth without texture (D51, D52).
 
+OpenMVG scenes (`sfm_data.bin` / `.json`, e.g. from Regard3D) are converted with OpenMVG's
+`openMVG_main_openMVG2Colmap -i sfm_data.bin -o project/sparse -f bin`; COLMAP, GLOMAP and other tools write
+the format directly. Supported camera models: `SIMPLE_PINHOLE`, `PINHOLE`, `SIMPLE_RADIAL`, `RADIAL`,
+`OPENCV`, `OPENCV_FISHEYE` and `FULL_OPENCV` without rational terms.
+
 Design and IP decisions are logged in [docs/DECISIONS.md](docs/DECISIONS.md). Using R3DMVS from another
 program, as a library or as a child process: [docs/API.md](docs/API.md).
 
 ```sh
 # Summary, stereo pairs, sparse cloud, camera frustums and undistorted images of a scene:
-r3dmvs scene path/to/sfm_data.bin --pairs --sparse-ply sparse.ply --colors --cameras-ply cameras.ply \
+r3dmvs scene path/to/project --pairs --sparse-ply sparse.ply --colors --cameras-ply cameras.ply \
        --undistort-dir undistorted
 
 # Rectify and match every view with its best partner; rectified images, disparity maps and a
 # coloured point cloud per pair:
-r3dmvs pair path/to/sfm_data.bin --all --out-dir pairs
+r3dmvs pair path/to/project --all --out-dir pairs
 
 # Dense point cloud with a preset (fast, normal (default), high, ultra); options given as well
 # override it. Depth maps are cached in the work directory; --reuse skips matching, --reuse-refined
 # also the refinement. --progress prints "progress <percent> <stage> <done>/<total>" lines:
-r3dmvs dense path/to/sfm_data.bin --preset normal --work-dir work --progress -o dense.ply
+r3dmvs dense path/to/project --preset normal --work-dir work --progress -o dense.ply
 # Sparser and cleaner: leaves of two GSD, points seen by two views:
-r3dmvs dense path/to/sfm_data.bin --work-dir work --reuse-refined --voxel-factor 2 --min-sources 2 \
+r3dmvs dense path/to/project --work-dir work --reuse-refined --voxel-factor 2 --min-sources 2 \
        -o dense_clean.ply
 
 # Point attributes for a mesher (--for poisson / fssr, also on 'dense'), and the scene for texrecon:
 r3dmvs export --cloud dense.ply --for poisson -o poisson_in.ply
-r3dmvs export path/to/sfm_data.bin --texrecon-dir texrecon
+r3dmvs export path/to/project --texrecon-dir texrecon
 # Mesh and texture end to end (PoissonRecon or FSSR, then texrecon), see tools/README.md:
-python tools/r3d_mesh.py path/to/sfm_data.bin --out-dir mesh --tools path/to/external_tools -- --voxel-factor 2
+python tools/r3d_mesh.py path/to/project --out-dir mesh --tools path/to/external_tools -- --voxel-factor 2
 
 # Match a rectified pair, or score the Middlebury 2014 training set (MiddEval3 layout):
 r3dmvs stereo path/to/MiddEval3/trainingH
 ```
 
-Images are looked up under `root_path`, then next to the `sfm_data` file; `--image-dir` overrides both.
+A scene is a COLMAP model directory (`cameras`, `images`, `points3D` as `.bin` or `.txt`; binary wins if
+both exist) or a project directory with the model in `sparse/0` or `sparse`. Image names are looked up
+under `images/` next to the project or the model, then next to the model; `--image-dir` overrides this.
 Matcher throughput is measured with `bench_stereo` ([bench/README.md](bench/README.md)).
 
 ## Binary releases
@@ -89,7 +96,7 @@ Releases are built by `.github/workflows/release.yml` when a tag `vX.Y.Z` matchi
 Requirements: CMake ≥ 3.25, Ninja, and a C++20 compiler with `<format>`:
 MSVC 19.30+ (VS 2022), clang-cl, GCC 13+, Clang 17+, or AppleClang 15+ (macOS 13.3+).
 Dependencies are downloaded automatically at configure time (pinned versions, SHA256-verified).
-Tests on real scenes run when `R3D_TESTDATA_DIR` (default `../testdata`) contains `<scene>/sfm_data.bin`.
+Tests on real scenes run when `R3D_TESTDATA_DIR` (default `../testdata`) contains `<scene>/sparse/cameras.bin`.
 Middlebury 2014 data for `r3dmvs stereo` is available at <https://vision.middlebury.edu/stereo/submit3/>
 (`MiddEval3-data-*.zip` and `MiddEval3-GT0-*.zip`).
 
@@ -106,4 +113,4 @@ installed packages (e.g. from vcpkg or a Linux distribution) over downloads.
 ## Dependencies
 
 All permissively licensed: Eigen (MPL-2.0, built with `EIGEN_MPL2_ONLY`), Google Highway (Apache-2.0),
-nlohmann/json (MIT), CLI11 (BSD-3), stb_image (public domain / MIT), doctest (MIT, tests only).
+CLI11 (BSD-3), stb_image (public domain / MIT), doctest (MIT, tests only).

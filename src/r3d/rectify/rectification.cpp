@@ -167,10 +167,6 @@ RectifiedPair compute_rectification(const CameraIntrinsics& cam_left, const Pose
                                     const CameraIntrinsics& cam_right, const Pose& pose_right, const DepthRange& depth,
                                     const RectificationOptions& options) {
   RectifiedPair pair;
-  if (!cam_left.is_perspective() || !cam_right.is_perspective()) {
-    pair.reason = "not a perspective camera";
-    return pair;
-  }
   if (!depth.valid()) {
     pair.reason = "invalid depth range";
     return pair;
