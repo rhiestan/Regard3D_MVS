@@ -1,116 +1,131 @@
 # R3DMVS
 
 Multi-view stereo densification of structure-from-motion results, developed for
-[Regard3D](https://www.regard3d.org). It takes a [COLMAP](https://colmap.github.io/format.html) sparse model
-(binary or text) and produces a dense, oriented, scale-annotated point cloud, which is meant to be meshed and textured with external tools (PoissonRecon,
-FSSR, texrecon).
+[Regard3D](https://www.regard3d.org).
 
-Status: **Phase 8** (library API and Regard3D integration). Done so far:
+R3DMVS takes a calibrated scene, a [COLMAP](https://colmap.github.io/format.html) sparse model (binary or
+text), and computes a dense point cloud with colours, oriented normals, per-point scale and confidence.
+The cloud is meant to be meshed and textured with external tools: PoissonRecon, FSSR and texrecon.
 
-- Phase 1: scene import, camera models with lens distortion, undistortion,
-  image pyramids, stereo pair selection, PLY exports for visual checks.
-- Phase 2: calibrated rectification, 9x7 Census, 8-path SGM over the full disparity range with tiling,
-  sub-pixel disparities, left-right check and filters (SIMD kernels bit-exact with scalar), Middlebury
-  evaluation, and one point cloud per stereo pair.
-- Phase 3: hierarchical matching with per-pixel disparity ranges from the coarser level, full
-  right-to-left consistency check, tiles admitted by a memory budget (`--memory-budget`); 20+ MP pairs
-  with thousands of disparities in seconds.
-- Phase 4: `r3dmvs dense`: per-view multi-stereo depth maps from up to 4 pairs, multi-view geometric
-  consistency, voxel fusion into a coloured PLY with normals and point scales. ETH3D training, half
-  resolution, F1 at 2 cm: courtyard 0.80, office 0.64, pipes 0.61, terrains 0.82 (COLMAP 4.2 at the same
-  resolution: 0.77, 0.37, 0.38, 0.72).
-- Phase 5: patch-based refinement of every depth as a plane (depth and orientation) by Gauss-Newton on
-  the normalised cross-correlation with the neighbouring images, per-pixel view selection, NCC
-  confidence. ETH3D F1 at 2 cm: courtyard 0.81, office 0.64, pipes 0.61, terrains 0.82.
-- Phase 6: visibility filter against the neighbouring views, octree fusion with leaves of one GSD
-  (best resolution wins, optional fold validation `--min-sources 2`, density `--voxel-factor`), and a
-  pipeline within a memory budget (`--memory`, `--fusion-memory`; depth maps that do not fit wait in the
-  work directory). ETH3D F1 at 2 cm: courtyard 0.80, office 0.64, pipes 0.62, terrains 0.82 (0.85 with
-  `--min-sources 2`).
-- Phase 7: point layouts for PoissonRecon and FSSR (`--for`), texrecon scene export, the cloud streamed
-  to disk while it is fused, and `tools/r3d_mesh.py` (cloud -> Poisson or FSSR -> trimmed mesh ->
-  texrecon). Mesh F1 at 2 cm with Poisson: courtyard 0.78, office 0.63, pipes 0.57, terrains 0.81, as good
-  as or better than OpenMVS's full pipeline on the same poses (0.78, 0.43, 0.55, 0.70), so there is no
-  built-in mesher (D43).
-- Phase 8: the pipeline as a library function (`r3d::densify`) with progress callbacks and
-  cancellation, presets `fast` / `normal` / `high` / `ultra`, and machine-readable progress and clean
-  cancellation (Ctrl+C, SIGTERM, Ctrl+Break) for programs that run `r3dmvs` as a child process.
-  Fusion by depth precision (points from small triangulation angles get coarser leaves): ETH3D F1 at 2 cm
-  with `normal`: courtyard 0.82, office 0.68, pipes 0.64, terrains 0.84. Depths that no other image
-  confirms are removed, and so are halos (depths that extend a surface over the plain background next to
-  it); `--weak-segment 0.001` also removes small islands without texture (sky, dark background),
-  `--reject-weak` every depth without texture (D51, D52).
+How it works:
 
-OpenMVG scenes (`sfm_data.bin` / `.json`, e.g. from Regard3D) are converted with OpenMVG's
-`openMVG_main_openMVG2Colmap -i sfm_data.bin -o project/sparse -f bin`; COLMAP, GLOMAP and other tools write
-the format directly. Supported camera models: `SIMPLE_PINHOLE`, `PINHOLE`, `SIMPLE_RADIAL`, `RADIAL`,
-`OPENCV`, `OPENCV_FISHEYE` and `FULL_OPENCV` without rational terms.
+1. Every view is matched with up to four stereo partners by hierarchical Census + semi-global matching
+   on rectified pairs.
+2. The depth maps are refined patch by patch (plane fitting on the normalised cross-correlation) and
+   checked for consistency and visibility against the neighbouring views.
+3. Everything is fused in an octree at the resolution of the best view, and stays within a memory
+   budget.
 
-Design and IP decisions are logged in [docs/DECISIONS.md](docs/DECISIONS.md). Using R3DMVS from another
-program, as a library or as a child process: [docs/API.md](docs/API.md).
+On the ETH3D training scenes (F1 at 2 cm, preset `normal`) R3DMVS scores courtyard 0.82, office 0.68,
+pipes 0.64 and terrains 0.84. COLMAP 4.2 at half resolution scores 0.77, 0.37, 0.38 and 0.72.
+
+R3DMVS is released under the [MIT license](LICENSE). All dependencies are permissively licensed.
+
+## Documentation
+
+- [docs/API.md](docs/API.md): using R3DMVS from another program, either as a C++ library (progress
+  callbacks, cancellation) or as a child process (progress on stdout, exit codes, clean cancellation).
+- [docs/DECISIONS.md](docs/DECISIONS.md): design decisions, with the benchmarks behind them.
+- [tools/README.md](tools/README.md): meshing and texturing end to end (PoissonRecon or FSSR, then
+  texrecon).
+- [bench/README.md](bench/README.md): matcher throughput benchmark.
+
+## Input
+
+A scene is either:
+
+- a COLMAP model directory with `cameras`, `images` and `points3D` as `.bin` or `.txt` (binary wins if
+  both exist), or
+- a project directory with the model in `sparse/0` or `sparse`.
+
+Image names are looked up under `images/` next to the project or the model, then next to the model.
+`--image-dir` overrides this.
+
+Supported camera models: `SIMPLE_PINHOLE`, `PINHOLE`, `SIMPLE_RADIAL`, `RADIAL`, `OPENCV`,
+`OPENCV_FISHEYE`, and `FULL_OPENCV` without rational terms.
+
+COLMAP and GLOMAP write this format directly, and so do many other tools. Convert OpenMVG scenes
+(`sfm_data.bin` / `.json`, e.g. from Regard3D) with OpenMVG's converter:
 
 ```sh
-# Summary, stereo pairs, sparse cloud, camera frustums and undistorted images of a scene:
-r3dmvs scene path/to/project --pairs --sparse-ply sparse.ply --colors --cameras-ply cameras.ply \
-       --undistort-dir undistorted
+openMVG_main_openMVG2Colmap -i sfm_data.bin -o project/sparse -f bin
+```
 
-# Rectify and match every view with its best partner; rectified images, disparity maps and a
-# coloured point cloud per pair:
-r3dmvs pair path/to/project --all --out-dir pairs
+## Usage
 
-# Dense point cloud with a preset (fast, normal (default), high, ultra); options given as well
-# override it. Depth maps are cached in the work directory; --reuse skips matching, --reuse-refined
-# also the refinement. --progress prints "progress <percent> <stage> <done>/<total>" lines:
-r3dmvs dense path/to/project --preset normal --work-dir work --progress -o dense.ply
-# Sparser and cleaner: leaves of two GSD, points seen by two views:
-r3dmvs dense path/to/project --work-dir work --reuse-refined --voxel-factor 2 --min-sources 2 \
-       -o dense_clean.ply
+```sh
+# Dense point cloud. Presets: fast, normal (default), high, ultra.
+r3dmvs dense path/to/project --preset normal --work-dir work -o dense.ply
+
+# Cleaner clouds: remove small untextured islands (sky, dark background), and also require two views:
+r3dmvs dense path/to/project --weak-segment 0.001 -o dense.ply
+r3dmvs dense path/to/project --weak-segment 0.001 --min-sources 2 -o dense.ply
 
 # Point attributes for a mesher (--for poisson / fssr, also on 'dense'), and the scene for texrecon:
 r3dmvs export --cloud dense.ply --for poisson -o poisson_in.ply
 r3dmvs export path/to/project --texrecon-dir texrecon
-# Mesh and texture end to end (PoissonRecon or FSSR, then texrecon), see tools/README.md:
-python tools/r3d_mesh.py path/to/project --out-dir mesh --tools path/to/external_tools -- --voxel-factor 2
 
-# Match a rectified pair, or score the Middlebury 2014 training set (MiddEval3 layout):
-r3dmvs stereo path/to/MiddEval3/trainingH
+# Mesh and texture end to end:
+python tools/r3d_mesh.py path/to/project --out-dir mesh --tools path/to/external_tools
+
+# Inspect a scene: summary, stereo pairs, sparse cloud, camera frustums, undistorted images:
+r3dmvs scene path/to/project --pairs --sparse-ply sparse.ply --cameras-ply cameras.ply
 ```
 
-A scene is a COLMAP model directory (`cameras`, `images`, `points3D` as `.bin` or `.txt`; binary wins if
-both exist) or a project directory with the model in `sparse/0` or `sparse`. Image names are looked up
-under `images/` next to the project or the model, then next to the model; `--image-dir` overrides this.
-Matcher throughput is measured with `bench_stereo` ([bench/README.md](bench/README.md)).
+`r3dmvs dense --preset high --help` lists all options and their values under a preset; options you
+give override the preset.
+
+How `dense` behaves:
+
+- Depth maps are cached in the work directory, so `--reuse` skips the matching.
+- `--progress` prints machine-readable progress lines.
+- Ctrl+C cancels cleanly.
 
 ## Binary releases
 
-Prebuilt `r3dmvs` command line programs are attached to the GitHub releases: Windows x64, Linux x64
-(Ubuntu 22.04 or any distribution with glibc 2.35 or newer) and macOS on Apple Silicon (macOS 13.3 or
-newer). They need no installation. The macOS program is not notarized; after downloading it with a browser,
-remove the quarantine flag with `xattr -d com.apple.quarantine r3dmvs`.
+Prebuilt `r3dmvs` programs are attached to the
+[GitHub releases](https://github.com/rhiestan/Regard3D_MVS/releases). They need no installation:
+
+| Platform | Requirement |
+|---|---|
+| Windows | x64 |
+| Linux | x64, glibc 2.35 or newer (e.g. Ubuntu 22.04) |
+| macOS | Apple Silicon, macOS 13.3 or newer |
+
+The macOS program is not notarized. After downloading it with a browser, remove the quarantine flag:
+`xattr -d com.apple.quarantine r3dmvs`.
 
 Releases are built by `.github/workflows/release.yml` when a tag `vX.Y.Z` matching the version in
-`CMakeLists.txt` is pushed; it creates a draft release with the packages.
+`CMakeLists.txt` is pushed. The workflow creates a draft release with the packages.
 
 ## Building
 
-Requirements: CMake ≥ 3.25, Ninja, and a C++20 compiler with `<format>`:
-MSVC 19.30+ (VS 2022), clang-cl, GCC 13+, Clang 17+, or AppleClang 15+ (macOS 13.3+).
-Dependencies are downloaded automatically at configure time (pinned versions, SHA256-verified).
-Tests on real scenes run when `R3D_TESTDATA_DIR` (default `../testdata`) contains `<scene>/sparse/cameras.bin`.
-Middlebury 2014 data for `r3dmvs stereo` is available at <https://vision.middlebury.edu/stereo/submit3/>
-(`MiddEval3-data-*.zip` and `MiddEval3-GT0-*.zip`).
+Requirements:
+
+- CMake ≥ 3.25 and Ninja.
+- A C++20 compiler with `<format>`: MSVC 19.30+ (VS 2022), clang-cl, GCC 13+, Clang 17+, or
+  AppleClang 15+ (macOS 13.3+).
+
+Dependencies are downloaded at configure time (pinned versions, SHA256-verified):
+
+| Dependency | License | Notes |
+|---|---|---|
+| Eigen | MPL-2.0 | built with `EIGEN_MPL2_ONLY` |
+| Google Highway | Apache-2.0 | |
+| CLI11 | BSD-3 | |
+| stb_image | public domain / MIT | |
+| doctest | MIT | tests only |
 
 ```sh
 cmake --preset gcc-release          # or: msvc-release, clang-cl-release, clang-release, macos-release
 cmake --build --preset gcc-release
 ctest --preset gcc-release
-./build/gcc-release/apps/r3dmvs info
 ```
 
-On Windows, run these from a Visual Studio developer prompt. Use `-DR3D_USE_SYSTEM_DEPS=ON` to prefer
-installed packages (e.g. from vcpkg or a Linux distribution) over downloads.
+Notes:
 
-## Dependencies
-
-All permissively licensed: Eigen (MPL-2.0, built with `EIGEN_MPL2_ONLY`), Google Highway (Apache-2.0),
-CLI11 (BSD-3), stb_image (public domain / MIT), doctest (MIT, tests only).
+- On Windows, run these from a Visual Studio developer prompt.
+- `-DR3D_USE_SYSTEM_DEPS=ON` prefers installed packages (e.g. from vcpkg or a Linux distribution) over
+  the downloads.
+- Tests on real scenes run when `R3D_TESTDATA_DIR` (default `../testdata`) contains
+  `<scene>/sparse/cameras.bin`.
